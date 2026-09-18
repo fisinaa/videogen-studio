@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     pexels_api_key: str = ""
     pixabay_api_key: str = ""
 
+    dashscope_api_key: str = ""
+    dashscope_base_url: str = ""
+    qwen_image_model: str = "qwen-image-2.0"
+    qwen_image_timeout_seconds: int = 180
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
