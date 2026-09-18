@@ -34,6 +34,17 @@ class ProjectStore:
         path = self.media_dir(project_id) / filename
         return path if path.is_file() else None
 
+    def audio_dir(self, project_id: str) -> Path:
+        path = self._project_dir(project_id) / "audio"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def audio_file(self, project_id: str, filename: str) -> Path | None:
+        if not SAFE_FILENAME_RE.fullmatch(filename):
+            return None
+        path = self.audio_dir(project_id) / filename
+        return path if path.is_file() else None
+
     def save(self, project: Project) -> Path:
         project_dir = self._project_dir(project.id)
         project_dir.mkdir(parents=True, exist_ok=True)
