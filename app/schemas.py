@@ -26,6 +26,16 @@ class Scene(BaseModel):
     media_search_query: str = ""
 
 
+class SceneUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=500)
+    duration_seconds: float = Field(gt=0, le=3600)
+    narration: str = Field(default="", max_length=10000)
+    dialogue: list[str] = Field(default_factory=list)
+    action: str = Field(min_length=1, max_length=10000)
+    visual_prompt: str = Field(min_length=1, max_length=10000)
+    media_search_query: str = Field(default="", max_length=1000)
+
+
 class Storyboard(BaseModel):
     title: str
     logline: str
