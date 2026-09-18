@@ -28,6 +28,7 @@ class MediaAsset(BaseModel):
     duration_seconds: float | None = None
     author: str = ""
     label: str = ""
+    local_path: str | None = None
 
 
 class Scene(BaseModel):
