@@ -9,11 +9,12 @@ from httpx import HTTPError
 from app.config import settings
 from app.providers.llm.llama_cpp import LlamaCppProvider
 from app.providers.media.router import media_router
+from app.providers.tts.openai_tts import openai_tts_provider
 from app.schemas import CreateProjectRequest, MediaAsset, Project, SceneUpdate
 from app.storage import project_store
 
 
-app = FastAPI(title="VideoGen Studio", version="0.5.0")
+app = FastAPI(title="VideoGen Studio", version="0.6.0")
 templates = Jinja2Templates(directory="app/templates")
 llm = LlamaCppProvider()
 
@@ -79,6 +80,13 @@ def _openai_error_detail(exc: HTTPError) -> str:
     return detail or exc.__class__.__name__
 
 
+def _scene_speech_text(scene) -> str:
+    narration = scene.narration.strip()
+    if narration:
+        return narration
+    return "\n".join(line.strip() for line in scene.dialogue if line.strip()).strip()
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     return templates.TemplateResponse(
@@ -88,6 +96,8 @@ async def index(request: Request):
             "projects": project_store.list_projects()[:10],
             "llm_url": settings.llm_base_url,
             "media_status": media_router.status(),
+            "tts_enabled": openai_tts_provider.enabled,
+            "tts_voice": settings.openai_tts_voice,
         },
     )
 
@@ -99,6 +109,11 @@ async def health():
         "llm_provider": settings.llm_provider,
         "llm_url": settings.llm_base_url,
         "media_providers": media_router.status(),
+        "tts": {
+            "openai": openai_tts_provider.enabled,
+            "model": settings.openai_tts_model,
+            "voice": settings.openai_tts_voice,
+        },
     }
 
 
@@ -134,6 +149,14 @@ async def get_project_media(project_id: str, filename: str):
     path = project_store.media_file(project_id, filename)
     if path is None:
         raise HTTPException(status_code=404, detail="Media file not found")
+    return FileResponse(path, headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@app.get("/api/projects/{project_id}/audio/{filename}")
+async def get_project_audio(project_id: str, filename: str):
+    path = project_store.audio_file(project_id, filename)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Audio file not found")
     return FileResponse(path, headers={"Cache-Control": "no-store, max-age=0"})
 
 
@@ -202,6 +225,8 @@ async def update_scene(project_id: str, scene_id: str, payload: SceneUpdate):
     for index, scene in enumerate(project.storyboard.scenes):
         if scene.id != scene_id:
             continue
+
+        speech_changed = scene.narration != payload.narration or scene.dialogue != payload.dialogue
         updated = scene.model_copy(
             update={
                 "title": payload.title,
@@ -211,6 +236,7 @@ async def update_scene(project_id: str, scene_id: str, payload: SceneUpdate):
                 "action": payload.action,
                 "visual_prompt": payload.visual_prompt,
                 "media_search_query": payload.media_search_query,
+                "selected_audio": None if speech_changed else scene.selected_audio,
             }
         )
         project.storyboard.scenes[index] = updated
@@ -237,6 +263,7 @@ async def regenerate_scene(project_id: str, scene_id: str):
             raise HTTPException(status_code=502, detail=f"LLM returned an invalid scene: {exc}") from exc
 
         regenerated.selected_media = scene.selected_media
+        regenerated.selected_audio = None
         project.storyboard.scenes[index] = regenerated
         project_store.save(project)
         return project
@@ -315,6 +342,42 @@ async def generate_scene_ai_media(project_id: str, scene_id: str):
     for index, item in enumerate(project.storyboard.scenes):
         if item.id == scene_id:
             project.storyboard.scenes[index] = item.model_copy(update={"selected_media": asset})
+            project_store.save(project)
+            return project
+    raise HTTPException(status_code=404, detail="Scene not found")
+
+
+@app.post("/api/projects/{project_id}/scenes/{scene_id}/audio/generate")
+async def generate_scene_audio(project_id: str, scene_id: str):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    scene = next((item for item in project.storyboard.scenes if item.id == scene_id), None)
+    if scene is None:
+        raise HTTPException(status_code=404, detail="Scene not found")
+    if not openai_tts_provider.enabled:
+        raise HTTPException(status_code=503, detail="OpenAI TTS is not configured. Add OPENAI_API_KEY to .env")
+
+    speech_text = _scene_speech_text(scene)
+    if not speech_text:
+        raise HTTPException(status_code=400, detail="Scene has no narration or dialogue to synthesize")
+
+    try:
+        asset = await openai_tts_provider.generate(
+            text=speech_text,
+            project_id=project.id,
+            scene_id=scene.id,
+            audio_dir=project_store.audio_dir(project.id),
+        )
+    except HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"OpenAI TTS request failed: {_openai_error_detail(exc)}") from exc
+    except (ValueError, RuntimeError, OSError) as exc:
+        raise HTTPException(status_code=502, detail=f"OpenAI TTS generation failed: {exc}") from exc
+
+    for index, item in enumerate(project.storyboard.scenes):
+        if item.id == scene_id:
+            project.storyboard.scenes[index] = item.model_copy(update={"selected_audio": asset})
             project_store.save(project)
             return project
     raise HTTPException(status_code=404, detail="Scene not found")
