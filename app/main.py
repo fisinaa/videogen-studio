@@ -1,7 +1,7 @@
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from httpx import HTTPError
 
@@ -12,7 +12,7 @@ from app.schemas import CreateProjectRequest, MediaAsset, Project, SceneUpdate
 from app.storage import project_store
 
 
-app = FastAPI(title="VideoGen Studio", version="0.3.0")
+app = FastAPI(title="VideoGen Studio", version="0.4.0")
 templates = Jinja2Templates(directory="app/templates")
 llm = LlamaCppProvider()
 
@@ -56,6 +56,14 @@ async def get_project(project_id: str):
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
+
+
+@app.get("/api/projects/{project_id}/media/{filename}")
+async def get_project_media(project_id: str, filename: str):
+    path = project_store.media_file(project_id, filename)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Media file not found")
+    return FileResponse(path)
 
 
 @app.post("/api/projects")
@@ -166,19 +174,82 @@ async def search_scene_media(
     if not search_query:
         raise HTTPException(status_code=400, detail="Media search query is empty")
 
-    status = media_router.status()
-    if not any(status.values()):
+    if not media_router.search_enabled():
         raise HTTPException(
             status_code=503,
-            detail="No media providers enabled. Add PEXELS_API_KEY and/or PIXABAY_API_KEY to .env",
+            detail="No stock media providers enabled. Add PEXELS_API_KEY and/or PIXABAY_API_KEY to .env",
         )
 
     assets = await media_router.search(search_query, limit_per_provider=4)
     return {
         "query": search_query,
-        "providers": status,
+        "providers": media_router.status(),
         "results": assets,
     }
+
+
+@app.post("/api/projects/{project_id}/scenes/{scene_id}/media/generate-ai")
+async def generate_scene_ai_media(project_id: str, scene_id: str):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    scene = next((item for item in project.storyboard.scenes if item.id == scene_id), None)
+    if scene is None:
+        raise HTTPException(status_code=404, detail="Scene not found")
+
+    provider = media_router.qwen_image
+    if not provider.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Qwen Image is not configured. Add DASHSCOPE_API_KEY and "
+                "DASHSCOPE_BASE_URL to .env"
+            ),
+        )
+
+    characters = "; ".join(project.storyboard.characters)
+    prompt_parts = [
+        scene.visual_prompt.strip(),
+        f"Visual style: {project.storyboard.visual_style.strip()}",
+    ]
+    if characters:
+        prompt_parts.append(f"Characters: {characters}")
+    prompt_parts.append(
+        "Keep character design coherent with the rest of the same animated project. "
+        "No captions, no text, no watermark."
+    )
+    prompt = "\n".join(part for part in prompt_parts if part)
+
+    try:
+        asset = await provider.generate(
+            prompt=prompt,
+            aspect_ratio=project.request.aspect_ratio,
+            project_id=project.id,
+            scene_id=scene.id,
+            media_dir=project_store.media_dir(project.id),
+        )
+    except HTTPError as exc:
+        detail = exc.response.text[:1000] if exc.response is not None else str(exc)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Qwen Image request failed: {detail}",
+        ) from exc
+    except (ValueError, RuntimeError, OSError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Qwen Image generation failed: {exc}",
+        ) from exc
+
+    for index, item in enumerate(project.storyboard.scenes):
+        if item.id == scene_id:
+            project.storyboard.scenes[index] = item.model_copy(
+                update={"selected_media": asset}
+            )
+            project_store.save(project)
+            return project
+
+    raise HTTPException(status_code=404, detail="Scene not found")
 
 
 @app.post("/api/projects/{project_id}/scenes/{scene_id}/media/select")
