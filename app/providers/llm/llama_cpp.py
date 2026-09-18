@@ -55,6 +55,7 @@ VISUAL: one compact English visual-generation prompt
 SEARCH: short English stock-media search query
 [/scene-001]
 
+Always include ALL five fields: NARRATION, DIALOGUE, ACTION, VISUAL and SEARCH.
 Keep the scene consistent with the project title, logline, visual style and neighboring context.
 Do not change the scene id or duration.
 """
@@ -174,6 +175,7 @@ def _parse_detail_blocks(content: str, batch: list[dict]) -> list[dict]:
                 "action": fields.get("ACTION") or source.get("beat") or "Continue the story.",
                 "visual_prompt": fields.get("VISUAL") or source.get("beat") or "cinematic animation",
                 "media_search_query": fields.get("SEARCH", ""),
+                "_raw_fields": fields,
             }
         )
 
@@ -295,7 +297,10 @@ class LlamaCppProvider(LLMProvider):
             temperature=settings.llm_temperature,
         )
 
-        return _parse_detail_blocks(content, batch)
+        parsed = _parse_detail_blocks(content, batch)
+        for item in parsed:
+            item.pop("_raw_fields", None)
+        return parsed
 
     async def regenerate_scene(
         self,
@@ -318,7 +323,10 @@ class LlamaCppProvider(LLMProvider):
             f"Scene duration: {scene.duration_seconds:.0f}s\n"
             f"Existing title: {scene.title}\n"
             f"Existing action: {scene.action}\n"
-            f"Existing narration: {scene.narration}\n\n"
+            f"Existing narration: {scene.narration}\n"
+            f"Existing dialogue: {' | '.join(scene.dialogue) if scene.dialogue else 'NONE'}\n"
+            f"Existing visual prompt: {scene.visual_prompt}\n"
+            f"Existing search query: {scene.media_search_query}\n\n"
             f"Rewrite only {scene.id}. Keep the same story purpose but improve the scene."
         )
 
@@ -331,7 +339,31 @@ class LlamaCppProvider(LLMProvider):
             temperature=settings.llm_temperature,
         )
         parsed = _parse_detail_blocks(content, [source])[0]
-        return Scene.model_validate(parsed)
+        raw_fields = parsed.pop("_raw_fields", {})
+
+        merged = {
+            "id": scene.id,
+            "title": scene.title,
+            "duration_seconds": scene.duration_seconds,
+            "narration": parsed["narration"] if raw_fields.get("NARRATION", "").strip() else scene.narration,
+            "dialogue": (
+                parsed["dialogue"]
+                if "DIALOGUE" in raw_fields
+                else scene.dialogue
+            ),
+            "action": parsed["action"] if raw_fields.get("ACTION", "").strip() else scene.action,
+            "visual_prompt": (
+                parsed["visual_prompt"]
+                if raw_fields.get("VISUAL", "").strip()
+                else scene.visual_prompt
+            ),
+            "media_search_query": (
+                parsed["media_search_query"]
+                if raw_fields.get("SEARCH", "").strip()
+                else scene.media_search_query
+            ),
+        }
+        return Scene.model_validate(merged)
 
     async def create_storyboard(self, request: CreateProjectRequest) -> Storyboard:
         outline = await self._create_outline(request)
