@@ -5,83 +5,60 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>VideoGen Studio</title>
   <style>
-    :root {
-      color-scheme: dark;
-      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-      background: #0b0d12;
-      color: #f5f7fb;
-    }
-    * { box-sizing: border-box; }
-    body { margin: 0; background: #0b0d12; }
-    main { width: min(1280px, 94vw); margin: 0 auto; padding: 42px 0 80px; }
-    h1 { font-size: 42px; margin: 0 0 8px; }
-    .muted { color: #969cab; }
-    .grid { display: grid; grid-template-columns: .9fr 1.1fr; gap: 24px; margin-top: 30px; }
-    .card { border: 1px solid #242936; border-radius: 18px; padding: 22px; background: #12151d; }
-    textarea, select, input {
-      width: 100%; margin-top: 7px; margin-bottom: 14px; padding: 11px 13px;
-      background: #0d1016; color: #fff; border: 1px solid #303646; border-radius: 10px; font: inherit;
-    }
-    textarea { min-height: 100px; resize: vertical; }
-    #prompt { min-height: 185px; }
-    label { display: block; font-size: 14px; color: #c7cbd4; }
-    .row { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
-    button {
-      border: 0; border-radius: 10px; padding: 11px 15px; font-weight: 700;
-      cursor: pointer; background: #7c5cff; color: white; font-size: 14px;
-    }
-    button.secondary { background: #252b37; }
-    button.warn { background: #6247aa; }
-    button:disabled { opacity: .55; cursor: wait; }
-    .scene { padding: 18px 0; border-top: 1px solid #252b37; }
-    .scene:first-child { border-top: 0; }
-    .scene-editor { background: #0e1118; border: 1px solid #252b37; border-radius: 14px; padding: 16px; margin: 14px 0; }
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background:#0b0d12; color:#f5f7fb; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:#0b0d12; }
+    main { width:min(1280px,94vw); margin:0 auto; padding:42px 0 80px; }
+    h1 { font-size:42px; margin:0 0 8px; }
+    .muted { color:#969cab; }
+    .grid { display:grid; grid-template-columns:.9fr 1.1fr; gap:24px; margin-top:30px; }
+    .card { border:1px solid #242936; border-radius:18px; padding:22px; background:#12151d; }
+    textarea,select,input { width:100%; margin-top:7px; margin-bottom:14px; padding:11px 13px; background:#0d1016; color:#fff; border:1px solid #303646; border-radius:10px; font:inherit; }
+    textarea { min-height:100px; resize:vertical; }
+    #prompt { min-height:185px; }
+    label { display:block; font-size:14px; color:#c7cbd4; }
+    .row { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+    button { border:0; border-radius:10px; padding:11px 15px; font-weight:700; cursor:pointer; background:#7c5cff; color:white; font-size:14px; }
+    button.secondary { background:#252b37; }
+    button.warn { background:#6247aa; }
+    button.media { background:#176b87; }
+    button:disabled { opacity:.55; cursor:wait; }
+    .scene { padding:18px 0; border-top:1px solid #252b37; }
+    .scene:first-child { border-top:0; }
+    .scene-editor { background:#0e1118; border:1px solid #252b37; border-radius:14px; padding:16px; margin:14px 0; }
     .scene-head { display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap; }
     .scene-actions { display:flex; gap:8px; flex-wrap:wrap; }
     .badge { display:inline-block; padding:3px 8px; border-radius:999px; background:#25203f; color:#bdafff; font-size:12px; }
     .summary { display:flex; gap:8px; flex-wrap:wrap; margin:14px 0 4px; }
-    .error { color: #ff8d8d; }
-    .success { color: #8ee59a; }
-    .dialogue-row { display:flex; gap:8px; align-items:center; }
-    .dialogue-row input { margin-bottom:8px; }
-    @media (max-width: 900px) {
-      .grid { grid-template-columns: 1fr; }
-      .row { grid-template-columns: 1fr; }
-    }
+    .error { color:#ff8d8d; }
+    .success { color:#8ee59a; }
+    .media-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:12px; }
+    .media-card { border:1px solid #2a3140; border-radius:12px; overflow:hidden; background:#0b0d12; }
+    .media-card img { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:#171b24; }
+    .media-info { padding:10px; font-size:12px; }
+    .media-info button { width:100%; margin-top:8px; }
+    .selected-media { margin:12px 0; padding:10px; border:1px solid #31543b; border-radius:12px; background:#0d1710; }
+    .selected-media img { width:180px; max-width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:8px; display:block; margin-top:8px; }
+    @media (max-width:900px) { .grid{grid-template-columns:1fr;} .row{grid-template-columns:1fr;} .media-grid{grid-template-columns:1fr;} }
   </style>
 </head>
 <body>
 <main>
   <h1>VideoGen Studio</h1>
   <div class="muted">LLM backend: {{ llm_url }}</div>
+  <div class="muted">Media: Pexels={{ 'ON' if media_status.pexels else 'OFF' }}, Pixabay={{ 'ON' if media_status.pixabay else 'OFF' }}</div>
 
   <div class="grid">
     <section class="card">
       <h2>Новый проект</h2>
       <form id="project-form">
-        <label>
-          Что хотим создать?
+        <label>Что хотим создать?
           <textarea id="prompt">Сделай первую серию оригинального приключенческого мультфильма о маленьком мышонке, которого на игрушечном кораблике уносит течением далеко от дома. Атмосфера: природа, опасность, любопытство, без дословного пересказа существующих произведений.</textarea>
         </label>
         <div class="row">
-          <label>Тип
-            <select id="project_type">
-              <option value="cartoon">Мультфильм</option>
-              <option value="series_episode">Серия</option>
-              <option value="video">Видео</option>
-              <option value="reel">Reel</option>
-            </select>
-          </label>
-          <label>Формат
-            <select id="aspect_ratio">
-              <option value="16:9">16:9</option>
-              <option value="9:16">9:16</option>
-              <option value="1:1">1:1</option>
-            </select>
-          </label>
-          <label>Длительность, сек
-            <input id="duration_seconds" type="number" min="10" max="7200" value="180">
-          </label>
+          <label>Тип<select id="project_type"><option value="cartoon">Мультфильм</option><option value="series_episode">Серия</option><option value="video">Видео</option><option value="reel">Reel</option></select></label>
+          <label>Формат<select id="aspect_ratio"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option></select></label>
+          <label>Длительность, сек<input id="duration_seconds" type="number" min="10" max="7200" value="180"></label>
         </div>
         <button id="submit" type="submit">Создать storyboard</button>
       </form>
@@ -98,186 +75,90 @@
     <h2>Последние проекты</h2>
     {% if projects %}
       {% for project in projects %}
-        <div class="scene">
-          <span class="badge">{{ project.request.project_type }}</span>
-          <strong>{{ project.storyboard.title }}</strong>
-          <div class="muted">{{ project.id }}</div>
-        </div>
+        <div class="scene"><span class="badge">{{ project.request.project_type }}</span> <strong>{{ project.storyboard.title }}</strong><div class="muted">{{ project.id }}</div></div>
       {% endfor %}
-    {% else %}
-      <div class="muted">Проектов пока нет.</div>
-    {% endif %}
+    {% else %}<div class="muted">Проектов пока нет.</div>{% endif %}
   </section>
 </main>
 
 <script>
-const form = document.getElementById("project-form");
-const result = document.getElementById("result");
-const status = document.getElementById("status");
-const submit = document.getElementById("submit");
-let currentProject = null;
+const form=document.getElementById("project-form");
+const result=document.getElementById("result");
+const status=document.getElementById("status");
+const submit=document.getElementById("submit");
+let currentProject=null;
 
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+function escapeHtml(value){return String(value??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");}
+function projectDuration(project){return project.storyboard.scenes.reduce((sum,scene)=>sum+Number(scene.duration_seconds||0),0);}
+
+function selectedMediaHtml(scene){
+  const media=scene.selected_media;
+  if(!media) return "";
+  const preview=media.preview_url?`<img src="${escapeHtml(media.preview_url)}" alt="preview">`:"";
+  return `<div class="selected-media"><b>Выбрано:</b> ${escapeHtml(media.provider)} · ${escapeHtml(media.asset_id)} ${preview}<div class="muted">${escapeHtml(media.label||media.source_url)}</div></div>`;
 }
 
-function projectDuration(project) {
-  return project.storyboard.scenes.reduce((sum, scene) => sum + Number(scene.duration_seconds || 0), 0);
+function sceneEditor(scene){
+  const dialogueText=(scene.dialogue||[]).join("\n");
+  return `<div class="scene-editor" data-scene-id="${escapeHtml(scene.id)}">
+    <div class="scene-head"><div><span class="badge">${escapeHtml(scene.id)}</span></div><div class="scene-actions">
+      <button class="secondary save-scene" type="button">Сохранить</button>
+      <button class="warn regen-scene" type="button">Перегенерировать</button>
+      <button class="media search-media" type="button">Найти медиа</button>
+    </div></div>
+    <label>Название<input class="f-title" value="${escapeHtml(scene.title)}"></label>
+    <label>Длительность, сек<input class="f-duration" type="number" min="0.1" step="0.1" value="${escapeHtml(scene.duration_seconds)}"></label>
+    <label>Наррация<textarea class="f-narration">${escapeHtml(scene.narration)}</textarea></label>
+    <label>Диалоги — по одной реплике на строку<textarea class="f-dialogue">${escapeHtml(dialogueText)}</textarea></label>
+    <label>Действие<textarea class="f-action">${escapeHtml(scene.action)}</textarea></label>
+    <label>Visual prompt<textarea class="f-visual">${escapeHtml(scene.visual_prompt)}</textarea></label>
+    <label>Media search query<input class="f-search" value="${escapeHtml(scene.media_search_query)}"></label>
+    ${selectedMediaHtml(scene)}
+    <div class="scene-message muted"></div><div class="media-results"></div>
+  </div>`;
 }
 
-function sceneEditor(scene) {
-  const dialogueText = (scene.dialogue || []).join("\n");
-  return `
-    <div class="scene-editor" data-scene-id="${escapeHtml(scene.id)}">
-      <div class="scene-head">
-        <div><span class="badge">${escapeHtml(scene.id)}</span></div>
-        <div class="scene-actions">
-          <button class="secondary save-scene" type="button">Сохранить</button>
-          <button class="warn regen-scene" type="button">Перегенерировать</button>
-        </div>
-      </div>
-      <label>Название
-        <input class="f-title" value="${escapeHtml(scene.title)}">
-      </label>
-      <label>Длительность, сек
-        <input class="f-duration" type="number" min="0.1" step="0.1" value="${escapeHtml(scene.duration_seconds)}">
-      </label>
-      <label>Наррация
-        <textarea class="f-narration">${escapeHtml(scene.narration)}</textarea>
-      </label>
-      <label>Диалоги — по одной реплике на строку
-        <textarea class="f-dialogue">${escapeHtml(dialogueText)}</textarea>
-      </label>
-      <label>Действие
-        <textarea class="f-action">${escapeHtml(scene.action)}</textarea>
-      </label>
-      <label>Visual prompt
-        <textarea class="f-visual">${escapeHtml(scene.visual_prompt)}</textarea>
-      </label>
-      <label>Media search query
-        <input class="f-search" value="${escapeHtml(scene.media_search_query)}">
-      </label>
-      <div class="scene-message muted"></div>
-    </div>`;
-}
-
-function renderProject(project) {
-  currentProject = project;
-  const sb = project.storyboard;
-  const totalDuration = projectDuration(project);
-  result.innerHTML =
-    `<h3>${escapeHtml(sb.title)}</h3>` +
-    `<p>${escapeHtml(sb.logline)}</p>` +
-    `<div class="muted">${escapeHtml(sb.visual_style)}</div>` +
-    `<div class="summary">` +
-      `<span class="badge">Сцен: ${escapeHtml(sb.scenes.length)}</span>` +
-      `<span class="badge">Storyboard: ${escapeHtml(totalDuration.toFixed(1))}s</span>` +
-      `<span class="badge">Project ID: ${escapeHtml(project.id)}</span>` +
-    `</div>` +
+function renderProject(project){
+  currentProject=project; const sb=project.storyboard; const totalDuration=projectDuration(project);
+  result.innerHTML=`<h3>${escapeHtml(sb.title)}</h3><p>${escapeHtml(sb.logline)}</p><div class="muted">${escapeHtml(sb.visual_style)}</div>`+
+    `<div class="summary"><span class="badge">Сцен: ${escapeHtml(sb.scenes.length)}</span><span class="badge">Storyboard: ${escapeHtml(totalDuration.toFixed(1))}s</span><span class="badge">Project ID: ${escapeHtml(project.id)}</span></div>`+
     sb.scenes.map(sceneEditor).join("");
-
   bindSceneButtons();
 }
 
-function readSceneEditor(editor) {
-  return {
-    title: editor.querySelector(".f-title").value.trim(),
-    duration_seconds: Number(editor.querySelector(".f-duration").value),
-    narration: editor.querySelector(".f-narration").value,
-    dialogue: editor.querySelector(".f-dialogue").value
-      .split("\n")
-      .map(v => v.trim())
-      .filter(Boolean),
-    action: editor.querySelector(".f-action").value.trim(),
-    visual_prompt: editor.querySelector(".f-visual").value.trim(),
-    media_search_query: editor.querySelector(".f-search").value.trim()
-  };
+function readSceneEditor(editor){return {title:editor.querySelector(".f-title").value.trim(),duration_seconds:Number(editor.querySelector(".f-duration").value),narration:editor.querySelector(".f-narration").value,dialogue:editor.querySelector(".f-dialogue").value.split("\n").map(v=>v.trim()).filter(Boolean),action:editor.querySelector(".f-action").value.trim(),visual_prompt:editor.querySelector(".f-visual").value.trim(),media_search_query:editor.querySelector(".f-search").value.trim()};}
+
+async function saveScene(editor){
+  const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"),button=editor.querySelector(".save-scene"); button.disabled=true; message.textContent="Сохраняю...";
+  try{const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(readSceneEditor(editor))}); const data=await response.json(); if(!response.ok)throw new Error(data.detail||"Save failed"); currentProject=data; message.innerHTML=`<span class="success">Сохранено. Общая длительность: ${projectDuration(data).toFixed(1)}s</span>`;}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}finally{button.disabled=false;}
 }
 
-async function saveScene(editor) {
-  const sceneId = editor.dataset.sceneId;
-  const message = editor.querySelector(".scene-message");
-  const button = editor.querySelector(".save-scene");
-  button.disabled = true;
-  message.textContent = "Сохраняю...";
-
-  try {
-    const response = await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}`, {
-      method: "PUT",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify(readSceneEditor(editor))
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || "Save failed");
-    currentProject = data;
-    message.innerHTML = `<span class="success">Сохранено. Общая длительность: ${projectDuration(data).toFixed(1)}s</span>`;
-  } catch (error) {
-    message.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
-  } finally {
-    button.disabled = false;
-  }
+async function regenerateScene(editor){
+  const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"),button=editor.querySelector(".regen-scene"); button.disabled=true; message.textContent="LLM перегенерирует только эту сцену...";
+  try{const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/regenerate`,{method:"POST"}); const data=await response.json(); if(!response.ok)throw new Error(data.detail||"Regeneration failed"); renderProject(data); status.textContent=`Сцена ${sceneId} перегенерирована. Project ID: ${data.id}`;}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;button.disabled=false;}
 }
 
-async function regenerateScene(editor) {
-  const sceneId = editor.dataset.sceneId;
-  const message = editor.querySelector(".scene-message");
-  const button = editor.querySelector(".regen-scene");
-  button.disabled = true;
-  message.textContent = "LLM перегенерирует только эту сцену...";
-
-  try {
-    const response = await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/regenerate`, {method: "POST"});
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || "Regeneration failed");
-    renderProject(data);
-    status.textContent = `Сцена ${sceneId} перегенерирована. Project ID: ${data.id}`;
-  } catch (error) {
-    message.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
-    button.disabled = false;
-  }
+function renderMediaResults(editor,assets){
+  const box=editor.querySelector(".media-results");
+  if(!assets.length){box.innerHTML=`<div class="muted">Ничего не найдено.</div>`;return;}
+  box.innerHTML=`<div class="media-grid">${assets.map((asset,index)=>`<div class="media-card">${asset.preview_url?`<img src="${escapeHtml(asset.preview_url)}" alt="${escapeHtml(asset.label)}">`:""}<div class="media-info"><b>${escapeHtml(asset.provider)}</b> · ${escapeHtml(asset.media_type)}<br>${escapeHtml(asset.width||"?")}×${escapeHtml(asset.height||"?")} ${asset.duration_seconds?`· ${escapeHtml(asset.duration_seconds)}s`:""}<button type="button" class="select-media" data-index="${index}">Выбрать</button></div></div>`).join("")}</div>`;
+  box.querySelectorAll(".select-media").forEach(button=>button.addEventListener("click",()=>selectMedia(editor,assets[Number(button.dataset.index)])));
 }
 
-function bindSceneButtons() {
-  document.querySelectorAll(".scene-editor").forEach(editor => {
-    editor.querySelector(".save-scene").addEventListener("click", () => saveScene(editor));
-    editor.querySelector(".regen-scene").addEventListener("click", () => regenerateScene(editor));
-  });
+async function searchMedia(editor){
+  const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"),button=editor.querySelector(".search-media"),query=editor.querySelector(".f-search").value.trim();
+  button.disabled=true; message.textContent="Ищу медиа..."; editor.querySelector(".media-results").innerHTML="";
+  try{const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/media/search?query=${encodeURIComponent(query)}`); const data=await response.json(); if(!response.ok)throw new Error(data.detail||"Media search failed"); message.textContent=`Найдено: ${data.results.length}`; renderMediaResults(editor,data.results);}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}finally{button.disabled=false;}
 }
 
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  submit.disabled = true;
-  status.textContent = "LLM генерирует storyboard...";
-  result.innerHTML = "";
+async function selectMedia(editor,asset){
+  const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"); message.textContent="Сохраняю выбранный ассет...";
+  try{const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/media/select`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(asset)}); const data=await response.json(); if(!response.ok)throw new Error(data.detail||"Media select failed"); renderProject(data); status.textContent=`Медиа для ${sceneId} выбрано и сохранено.`;}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}
+}
 
-  const body = {
-    prompt: document.getElementById("prompt").value,
-    project_type: document.getElementById("project_type").value,
-    aspect_ratio: document.getElementById("aspect_ratio").value,
-    duration_seconds: Number(document.getElementById("duration_seconds").value),
-    language: "ru"
-  };
+function bindSceneButtons(){document.querySelectorAll(".scene-editor").forEach(editor=>{editor.querySelector(".save-scene").addEventListener("click",()=>saveScene(editor));editor.querySelector(".regen-scene").addEventListener("click",()=>regenerateScene(editor));editor.querySelector(".search-media").addEventListener("click",()=>searchMedia(editor));});}
 
-  try {
-    const response = await fetch("/api/projects", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify(body)
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || "Unknown error");
-    status.textContent = "Готово. Теперь можно редактировать отдельные сцены.";
-    renderProject(data);
-  } catch (error) {
-    status.innerHTML = `<span class="error">Ошибка: ${escapeHtml(error.message)}</span>`;
-  } finally {
-    submit.disabled = false;
-  }
-});
+form.addEventListener("submit",async(event)=>{event.preventDefault();submit.disabled=true;status.textContent="LLM генерирует storyboard...";result.innerHTML="";const body={prompt:document.getElementById("prompt").value,project_type:document.getElementById("project_type").value,aspect_ratio:document.getElementById("aspect_ratio").value,duration_seconds:Number(document.getElementById("duration_seconds").value),language:"ru"};try{const response=await fetch("/api/projects",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const data=await response.json();if(!response.ok)throw new Error(data.detail||"Unknown error");status.textContent="Готово. Теперь можно редактировать сцены и подбирать медиа.";renderProject(data);}catch(error){status.innerHTML=`<span class="error">Ошибка: ${escapeHtml(error.message)}</span>`;}finally{submit.disabled=false;}});
 </script>
 </body>
 </html>
