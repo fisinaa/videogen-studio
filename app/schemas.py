@@ -65,3 +65,4 @@ class Project(BaseModel):
     id: str
     request: CreateProjectRequest
     storyboard: Storyboard
+    character_reference: MediaAsset | None = None
