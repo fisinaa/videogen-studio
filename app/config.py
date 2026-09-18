@@ -19,10 +19,11 @@ class Settings(BaseSettings):
     pexels_api_key: str = ""
     pixabay_api_key: str = ""
 
-    dashscope_api_key: str = ""
-    dashscope_base_url: str = ""
-    qwen_image_model: str = "qwen-image-2.0"
-    qwen_image_timeout_seconds: int = 180
+    openai_api_key: str = ""
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_image_model: str = "gpt-image-2"
+    openai_image_quality: str = "medium"
+    openai_image_timeout_seconds: int = 180
 
     model_config = SettingsConfigDict(
         env_file=".env",
