@@ -42,8 +42,8 @@ Storyboard rules:
 - Every scene MUST contain ALL schema keys exactly as written above.
 - Never rename keys. In particular, scene identifier key is exactly "id".
 - The SUM of all scene durations must be close to the requested target duration.
-- Prefer practical scenes of about 6-12 seconds each.
-- For a 180 second request, create roughly 15-25 scenes, not one long scene.
+- Prefer practical scenes of about 8-12 seconds each.
+- For a 180 second request, create roughly 15-20 scenes, not one long scene.
 - Keep narration/dialogue concise enough to fit inside each scene duration.
 - Keep scenes practical for later rendering with stock media, generated images/video,
   voice-over, subtitles and HyperFrames composition.
@@ -53,9 +53,12 @@ Storyboard rules:
 REPAIR_SYSTEM_PROMPT = """You repair malformed JSON for a video storyboard.
 Return ONLY corrected valid JSON, with no markdown and no explanation.
 Do not rewrite the story unless necessary. Preserve scene content and durations.
-Every scene must contain exactly these semantic fields:
+Fix JSON syntax errors such as missing colons, commas, quotes, brackets or braces.
+Every scene must contain these fields:
 id, title, duration_seconds, narration, dialogue, action, visual_prompt, media_search_query.
 If a scene identifier exists under a wrong key, move its value to "id".
+If the input was truncated, close the current structure cleanly and preserve as many
+complete scenes as possible. Never invent commentary outside the JSON object.
 """
 
 
@@ -76,7 +79,7 @@ def _extract_json(text: str) -> dict:
         start = text.find("{")
         end = text.rfind("}")
         if start == -1 or end == -1 or end <= start:
-            raise ValueError("LLM response does not contain a JSON object")
+            raise ValueError("LLM response does not contain a complete JSON object")
         return json.loads(text[start : end + 1])
 
 
@@ -104,7 +107,9 @@ def _normalize_storyboard_data(data: dict) -> dict:
             for key, value in list(scene.items()):
                 if key == "id":
                     continue
-                if isinstance(value, str) and re.fullmatch(r"scene[-_ ]?\d+", value.strip(), re.IGNORECASE):
+                if isinstance(value, str) and re.fullmatch(
+                    r"scene[-_ ]?\d+", value.strip(), re.IGNORECASE
+                ):
                     scene["id"] = value.strip().replace("_", "-").replace(" ", "-")
                     if key not in {
                         "title",
@@ -119,7 +124,6 @@ def _normalize_storyboard_data(data: dict) -> dict:
         if not scene.get("id"):
             scene["id"] = f"scene-{index:03d}"
 
-        # Harmless defaults: strict semantics are still checked by Pydantic.
         scene.setdefault("title", f"Scene {index}")
         scene.setdefault("narration", "")
         scene.setdefault("dialogue", [])
@@ -155,13 +159,22 @@ class LlamaCppProvider(LLMProvider):
             headers["Authorization"] = f"Bearer {settings.llm_api_key}"
         return headers
 
-    async def _chat(self, messages: list[dict], max_tokens: int, temperature: float) -> str:
+    async def _chat(
+        self,
+        messages: list[dict],
+        max_tokens: int,
+        temperature: float,
+        json_mode: bool = True,
+    ) -> str:
         payload = {
             "model": settings.llm_model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
 
         timeout = httpx.Timeout(settings.llm_timeout_seconds)
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -170,49 +183,94 @@ class LlamaCppProvider(LLMProvider):
                 headers=self._headers(),
                 json=payload,
             )
+
+            # Older llama.cpp builds may not understand response_format.
+            # Retry once without it instead of failing the whole request.
+            if response.status_code == 400 and json_mode:
+                payload.pop("response_format", None)
+                response = await client.post(
+                    settings.llm_base_url.rstrip("/") + "/chat/completions",
+                    headers=self._headers(),
+                    json=payload,
+                )
+
             response.raise_for_status()
 
         data = response.json()
         return data["choices"][0]["message"]["content"]
 
-    async def _validate_or_repair(self, content: str, max_tokens: int) -> Storyboard:
-        parsed = _normalize_storyboard_data(_extract_json(content))
+    async def _repair_content(
+        self,
+        content: str,
+        error_text: str,
+        max_tokens: int,
+    ) -> Storyboard:
+        repair_prompt = (
+            "Repair the malformed storyboard below. Return the COMPLETE corrected "
+            "JSON object only.\n\n"
+            "Detected error:\n"
+            f"{error_text}\n\n"
+            "Malformed storyboard text:\n"
+            f"{content}"
+        )
+
+        repaired_content = await self._chat(
+            messages=[
+                {"role": "system", "content": REPAIR_SYSTEM_PROMPT},
+                {"role": "user", "content": repair_prompt},
+            ],
+            max_tokens=max_tokens,
+            temperature=0.0,
+            json_mode=True,
+        )
 
         try:
-            return Storyboard.model_validate(parsed)
-        except ValidationError as first_error:
-            repair_prompt = (
-                "Repair this storyboard JSON so it matches the required schema.\n\n"
-                "Validation error:\n"
-                f"{first_error}\n\n"
-                "Malformed JSON:\n"
-                f"{json.dumps(parsed, ensure_ascii=False)}"
-            )
+            repaired_data = _extract_json(repaired_content)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(
+                "Storyboard JSON remained malformed after automatic repair: "
+                f"{exc}"
+            ) from exc
 
-            repaired_content = await self._chat(
-                messages=[
-                    {"role": "system", "content": REPAIR_SYSTEM_PROMPT},
-                    {"role": "user", "content": repair_prompt},
-                ],
+        repaired_data = _normalize_storyboard_data(repaired_data)
+        try:
+            return Storyboard.model_validate(repaired_data)
+        except ValidationError as exc:
+            raise ValueError(
+                "Storyboard schema invalid after automatic repair: "
+                f"{exc}"
+            ) from exc
+
+    async def _validate_or_repair(self, content: str, max_tokens: int) -> Storyboard:
+        # Stage 1: JSON syntax. If json.loads fails, repair the RAW model output.
+        try:
+            parsed = _extract_json(content)
+        except (json.JSONDecodeError, ValueError) as exc:
+            return await self._repair_content(
+                content=content,
+                error_text=f"JSON parse error: {exc}",
                 max_tokens=max_tokens,
-                temperature=0.0,
             )
 
-            repaired = _normalize_storyboard_data(_extract_json(repaired_content))
-            try:
-                return Storyboard.model_validate(repaired)
-            except ValidationError as second_error:
-                raise ValueError(
-                    "Storyboard schema invalid after automatic repair: "
-                    f"{second_error}"
-                ) from second_error
+        # Stage 2: known harmless schema slips.
+        parsed = _normalize_storyboard_data(parsed)
+
+        # Stage 3: strict schema validation. If this fails, repair the parsed JSON.
+        try:
+            return Storyboard.model_validate(parsed)
+        except ValidationError as exc:
+            return await self._repair_content(
+                content=json.dumps(parsed, ensure_ascii=False),
+                error_text=f"Schema validation error: {exc}",
+                max_tokens=max_tokens,
+            )
 
     async def _request_storyboard(
         self,
         request: CreateProjectRequest,
         correction: str = "",
     ) -> Storyboard:
-        target_scene_count = max(1, round(request.duration_seconds / 9))
+        target_scene_count = max(1, round(request.duration_seconds / 10))
         user_prompt = (
             "Create a storyboard.\n\n"
             f"User idea:\n{request.prompt}\n\n"
@@ -221,12 +279,13 @@ class LlamaCppProvider(LLMProvider):
             f"Target duration: {request.duration_seconds} seconds\n"
             f"Target scene count: about {target_scene_count}\n"
             f"Language for narration/dialogue: {request.language}\n"
+            "Keep every field concise. visual_prompt should be one compact sentence.\n"
             f"{correction}"
         )
 
         dynamic_max_tokens = min(
-            3000,
-            max(settings.llm_max_tokens, target_scene_count * 120),
+            3200,
+            max(settings.llm_max_tokens, target_scene_count * 130),
         )
 
         content = await self._chat(
@@ -236,6 +295,7 @@ class LlamaCppProvider(LLMProvider):
             ],
             max_tokens=dynamic_max_tokens,
             temperature=settings.llm_temperature,
+            json_mode=True,
         )
 
         return await self._validate_or_repair(content, max_tokens=dynamic_max_tokens)
