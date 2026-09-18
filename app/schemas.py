@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 ProjectType = Literal["reel", "video", "cartoon", "series_episode"]
 AspectRatio = Literal["9:16", "16:9", "1:1"]
+MediaType = Literal["video", "image"]
 
 
 class CreateProjectRequest(BaseModel):
@@ -13,6 +14,20 @@ class CreateProjectRequest(BaseModel):
     aspect_ratio: AspectRatio = "16:9"
     duration_seconds: int = Field(default=60, ge=10, le=7200)
     language: str = Field(default="ru", min_length=2, max_length=16)
+
+
+class MediaAsset(BaseModel):
+    provider: str
+    asset_id: str
+    media_type: MediaType
+    preview_url: str
+    source_url: str
+    download_url: str
+    width: int | None = None
+    height: int | None = None
+    duration_seconds: float | None = None
+    author: str = ""
+    label: str = ""
 
 
 class Scene(BaseModel):
@@ -24,6 +39,7 @@ class Scene(BaseModel):
     action: str
     visual_prompt: str
     media_search_query: str = ""
+    selected_media: MediaAsset | None = None
 
 
 class SceneUpdate(BaseModel):
