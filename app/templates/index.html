@@ -22,6 +22,7 @@
     button.secondary { background:#252b37; }
     button.warn { background:#6247aa; }
     button.media { background:#176b87; }
+    button.ai { background:#287a4a; }
     button:disabled { opacity:.55; cursor:wait; }
     .scene { padding:18px 0; border-top:1px solid #252b37; }
     .scene:first-child { border-top:0; }
@@ -38,7 +39,7 @@
     .media-info { padding:10px; font-size:12px; }
     .media-info button { width:100%; margin-top:8px; }
     .selected-media { margin:12px 0; padding:10px; border:1px solid #31543b; border-radius:12px; background:#0d1710; }
-    .selected-media img { width:180px; max-width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:8px; display:block; margin-top:8px; }
+    .selected-media img { width:320px; max-width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:8px; display:block; margin-top:8px; }
     .recent-project { padding:14px; border:1px solid #252b37; border-radius:12px; margin:10px 0; cursor:pointer; transition:.15s ease; background:#0e1118; }
     .recent-project:hover { border-color:#5f54a8; transform:translateY(-1px); }
     .recent-project.active { border-color:#7c5cff; background:#171329; box-shadow:0 0 0 1px #7c5cff inset; }
@@ -51,7 +52,7 @@
 <main>
   <h1>VideoGen Studio</h1>
   <div class="muted">LLM backend: {{ llm_url }}</div>
-  <div class="muted">Media: Pexels={{ 'ON' if media_status.pexels else 'OFF' }}, Pixabay={{ 'ON' if media_status.pixabay else 'OFF' }}</div>
+  <div class="muted">Media: Pexels={{ 'ON' if media_status.pexels else 'OFF' }}, Pixabay={{ 'ON' if media_status.pixabay else 'OFF' }}, Qwen Image={{ 'ON' if media_status.qwen_image else 'OFF' }}</div>
 
   <div class="grid">
     <section class="card">
@@ -100,39 +101,16 @@ let currentProject=null;
 function escapeHtml(value){return String(value??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");}
 function projectDuration(project){return project.storyboard.scenes.reduce((sum,scene)=>sum+Number(scene.duration_seconds||0),0);}
 
-function setProjectInUrl(projectId){
-  const url=new URL(window.location.href);
-  if(projectId) url.searchParams.set("project",projectId); else url.searchParams.delete("project");
-  window.history.replaceState({},"",url);
-}
-
-function highlightActiveProject(projectId){
-  document.querySelectorAll(".recent-project").forEach(item=>item.classList.toggle("active",item.dataset.projectId===projectId));
-}
+function setProjectInUrl(projectId){const url=new URL(window.location.href);if(projectId)url.searchParams.set("project",projectId);else url.searchParams.delete("project");window.history.replaceState({},"",url);}
+function highlightActiveProject(projectId){document.querySelectorAll(".recent-project").forEach(item=>item.classList.toggle("active",item.dataset.projectId===projectId));}
 
 async function loadProject(projectId){
-  if(!projectId) return;
-  status.textContent=`Загружаю проект ${projectId}...`;
-  try{
-    const response=await fetch(`/api/projects/${encodeURIComponent(projectId)}`);
-    const data=await response.json();
-    if(!response.ok) throw new Error(data.detail||"Project load failed");
-    renderProject(data);
-    setProjectInUrl(data.id);
-    highlightActiveProject(data.id);
-    status.textContent=`Проект загружен: ${data.storyboard.title} · ${data.id}`;
-    result.scrollIntoView({behavior:"smooth",block:"start"});
-  }catch(error){
-    status.innerHTML=`<span class="error">Ошибка загрузки проекта: ${escapeHtml(error.message)}</span>`;
-  }
+  if(!projectId)return;status.textContent=`Загружаю проект ${projectId}...`;
+  try{const response=await fetch(`/api/projects/${encodeURIComponent(projectId)}`);const data=await response.json();if(!response.ok)throw new Error(data.detail||"Project load failed");renderProject(data);setProjectInUrl(data.id);highlightActiveProject(data.id);status.textContent=`Проект загружен: ${data.storyboard.title} · ${data.id}`;result.scrollIntoView({behavior:"smooth",block:"start"});}
+  catch(error){status.innerHTML=`<span class="error">Ошибка загрузки проекта: ${escapeHtml(error.message)}</span>`;}
 }
 
-function selectedMediaHtml(scene){
-  const media=scene.selected_media;
-  if(!media) return "";
-  const preview=media.preview_url?`<img src="${escapeHtml(media.preview_url)}" alt="preview">`:"";
-  return `<div class="selected-media"><b>Выбрано:</b> ${escapeHtml(media.provider)} · ${escapeHtml(media.asset_id)} ${preview}<div class="muted">${escapeHtml(media.label||media.source_url)}</div></div>`;
-}
+function selectedMediaHtml(scene){const media=scene.selected_media;if(!media)return "";const preview=media.preview_url?`<img src="${escapeHtml(media.preview_url)}" alt="preview">`:"";return `<div class="selected-media"><b>Выбрано:</b> ${escapeHtml(media.provider)} · ${escapeHtml(media.asset_id)} ${preview}<div class="muted">${escapeHtml(media.label||media.source_url)}</div></div>`;}
 
 function sceneEditor(scene){
   const dialogueText=(scene.dialogue||[]).join("\n");
@@ -140,7 +118,8 @@ function sceneEditor(scene){
     <div class="scene-head"><div><span class="badge">${escapeHtml(scene.id)}</span></div><div class="scene-actions">
       <button class="secondary save-scene" type="button">Сохранить</button>
       <button class="warn regen-scene" type="button">Перегенерировать</button>
-      <button class="media search-media" type="button">Найти медиа</button>
+      <button class="media search-media" type="button">Найти stock</button>
+      <button class="ai generate-ai" type="button">Сгенерировать AI</button>
     </div></div>
     <label>Название<input class="f-title" value="${escapeHtml(scene.title)}"></label>
     <label>Длительность, сек<input class="f-duration" type="number" min="0.1" step="0.1" value="${escapeHtml(scene.duration_seconds)}"></label>
@@ -154,60 +133,36 @@ function sceneEditor(scene){
   </div>`;
 }
 
-function renderProject(project){
-  currentProject=project; const sb=project.storyboard; const totalDuration=projectDuration(project);
-  result.innerHTML=`<h3>${escapeHtml(sb.title)}</h3><p>${escapeHtml(sb.logline)}</p><div class="muted">${escapeHtml(sb.visual_style)}</div>`+
-    `<div class="summary"><span class="badge">Сцен: ${escapeHtml(sb.scenes.length)}</span><span class="badge">Storyboard: ${escapeHtml(totalDuration.toFixed(1))}s</span><span class="badge">Project ID: ${escapeHtml(project.id)}</span></div>`+
-    sb.scenes.map(sceneEditor).join("");
-  bindSceneButtons();
-  highlightActiveProject(project.id);
-}
-
+function renderProject(project){currentProject=project;const sb=project.storyboard,totalDuration=projectDuration(project);result.innerHTML=`<h3>${escapeHtml(sb.title)}</h3><p>${escapeHtml(sb.logline)}</p><div class="muted">${escapeHtml(sb.visual_style)}</div>`+`<div class="summary"><span class="badge">Сцен: ${escapeHtml(sb.scenes.length)}</span><span class="badge">Storyboard: ${escapeHtml(totalDuration.toFixed(1))}s</span><span class="badge">Project ID: ${escapeHtml(project.id)}</span></div>`+sb.scenes.map(sceneEditor).join("");bindSceneButtons();highlightActiveProject(project.id);}
 function readSceneEditor(editor){return {title:editor.querySelector(".f-title").value.trim(),duration_seconds:Number(editor.querySelector(".f-duration").value),narration:editor.querySelector(".f-narration").value,dialogue:editor.querySelector(".f-dialogue").value.split("\n").map(v=>v.trim()).filter(Boolean),action:editor.querySelector(".f-action").value.trim(),visual_prompt:editor.querySelector(".f-visual").value.trim(),media_search_query:editor.querySelector(".f-search").value.trim()};}
 
-async function saveScene(editor){
-  const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"),button=editor.querySelector(".save-scene"); button.disabled=true; message.textContent="Сохраняю...";
-  try{const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(readSceneEditor(editor))}); const data=await response.json(); if(!response.ok)throw new Error(data.detail||"Save failed"); currentProject=data; message.innerHTML=`<span class="success">Сохранено. Общая длительность: ${projectDuration(data).toFixed(1)}s</span>`;}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}finally{button.disabled=false;}
+async function saveScene(editor){const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"),button=editor.querySelector(".save-scene");button.disabled=true;message.textContent="Сохраняю...";try{const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(readSceneEditor(editor))});const data=await response.json();if(!response.ok)throw new Error(data.detail||"Save failed");currentProject=data;message.innerHTML=`<span class="success">Сохранено. Общая длительность: ${projectDuration(data).toFixed(1)}s</span>`;}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}finally{button.disabled=false;}}
+async function regenerateScene(editor){const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"),button=editor.querySelector(".regen-scene");button.disabled=true;message.textContent="LLM перегенерирует только эту сцену...";try{const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/regenerate`,{method:"POST"});const data=await response.json();if(!response.ok)throw new Error(data.detail||"Regeneration failed");renderProject(data);setProjectInUrl(data.id);status.textContent=`Сцена ${sceneId} перегенерирована. Project ID: ${data.id}`;}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;button.disabled=false;}}
+
+function renderMediaResults(editor,assets){const box=editor.querySelector(".media-results");if(!assets.length){box.innerHTML=`<div class="muted">Ничего не найдено.</div>`;return;}box.innerHTML=`<div class="media-grid">${assets.map((asset,index)=>`<div class="media-card">${asset.preview_url?`<img src="${escapeHtml(asset.preview_url)}" alt="${escapeHtml(asset.label)}">`:""}<div class="media-info"><b>${escapeHtml(asset.provider)}</b> · ${escapeHtml(asset.media_type)}<br>${escapeHtml(asset.width||"?")}×${escapeHtml(asset.height||"?")} ${asset.duration_seconds?`· ${escapeHtml(asset.duration_seconds)}s`:""}<button type="button" class="select-media" data-index="${index}">Выбрать</button></div></div>`).join("")}</div>`;box.querySelectorAll(".select-media").forEach(button=>button.addEventListener("click",()=>selectMedia(editor,assets[Number(button.dataset.index)])));}
+async function searchMedia(editor){const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"),button=editor.querySelector(".search-media"),query=editor.querySelector(".f-search").value.trim();button.disabled=true;message.textContent="Ищу stock-медиа...";editor.querySelector(".media-results").innerHTML="";try{const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/media/search?query=${encodeURIComponent(query)}`);const data=await response.json();if(!response.ok)throw new Error(data.detail||"Media search failed");message.textContent=`Найдено: ${data.results.length}`;renderMediaResults(editor,data.results);}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}finally{button.disabled=false;}}
+async function selectMedia(editor,asset){const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message");message.textContent="Сохраняю выбранный ассет...";try{const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/media/select`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(asset)});const data=await response.json();if(!response.ok)throw new Error(data.detail||"Media select failed");renderProject(data);setProjectInUrl(data.id);status.textContent=`Медиа для ${sceneId} выбрано и сохранено.`;}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}}
+
+async function generateAiImage(editor){
+  const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"),button=editor.querySelector(".generate-ai");
+  button.disabled=true;message.textContent="Qwen Image генерирует изображение...";
+  try{
+    await saveScene(editor);
+    const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/media/generate-ai`,{method:"POST"});
+    const data=await response.json();
+    if(!response.ok)throw new Error(data.detail||"AI image generation failed");
+    renderProject(data);setProjectInUrl(data.id);status.textContent=`AI-изображение для ${sceneId} сгенерировано, скачано локально и выбрано.`;
+  }catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;button.disabled=false;}
 }
 
-async function regenerateScene(editor){
-  const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"),button=editor.querySelector(".regen-scene"); button.disabled=true; message.textContent="LLM перегенерирует только эту сцену...";
-  try{const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/regenerate`,{method:"POST"}); const data=await response.json(); if(!response.ok)throw new Error(data.detail||"Regeneration failed"); renderProject(data); setProjectInUrl(data.id); status.textContent=`Сцена ${sceneId} перегенерирована. Project ID: ${data.id}`;}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;button.disabled=false;}
-}
-
-function renderMediaResults(editor,assets){
-  const box=editor.querySelector(".media-results");
-  if(!assets.length){box.innerHTML=`<div class="muted">Ничего не найдено.</div>`;return;}
-  box.innerHTML=`<div class="media-grid">${assets.map((asset,index)=>`<div class="media-card">${asset.preview_url?`<img src="${escapeHtml(asset.preview_url)}" alt="${escapeHtml(asset.label)}">`:""}<div class="media-info"><b>${escapeHtml(asset.provider)}</b> · ${escapeHtml(asset.media_type)}<br>${escapeHtml(asset.width||"?")}×${escapeHtml(asset.height||"?")} ${asset.duration_seconds?`· ${escapeHtml(asset.duration_seconds)}s`:""}<button type="button" class="select-media" data-index="${index}">Выбрать</button></div></div>`).join("")}</div>`;
-  box.querySelectorAll(".select-media").forEach(button=>button.addEventListener("click",()=>selectMedia(editor,assets[Number(button.dataset.index)])));
-}
-
-async function searchMedia(editor){
-  const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"),button=editor.querySelector(".search-media"),query=editor.querySelector(".f-search").value.trim();
-  button.disabled=true; message.textContent="Ищу медиа..."; editor.querySelector(".media-results").innerHTML="";
-  try{const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/media/search?query=${encodeURIComponent(query)}`); const data=await response.json(); if(!response.ok)throw new Error(data.detail||"Media search failed"); message.textContent=`Найдено: ${data.results.length}`; renderMediaResults(editor,data.results);}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}finally{button.disabled=false;}
-}
-
-async function selectMedia(editor,asset){
-  const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"); message.textContent="Сохраняю выбранный ассет...";
-  try{const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/media/select`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(asset)}); const data=await response.json(); if(!response.ok)throw new Error(data.detail||"Media select failed"); renderProject(data); setProjectInUrl(data.id); status.textContent=`Медиа для ${sceneId} выбрано и сохранено.`;}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}
-}
-
-function bindSceneButtons(){document.querySelectorAll(".scene-editor").forEach(editor=>{editor.querySelector(".save-scene").addEventListener("click",()=>saveScene(editor));editor.querySelector(".regen-scene").addEventListener("click",()=>regenerateScene(editor));editor.querySelector(".search-media").addEventListener("click",()=>searchMedia(editor));});}
-
-function bindRecentProjects(){
-  document.querySelectorAll(".recent-project").forEach(item=>{
-    const open=()=>loadProject(item.dataset.projectId);
-    item.addEventListener("click",open);
-    item.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();open();}});
-  });
-}
+function bindSceneButtons(){document.querySelectorAll(".scene-editor").forEach(editor=>{editor.querySelector(".save-scene").addEventListener("click",()=>saveScene(editor));editor.querySelector(".regen-scene").addEventListener("click",()=>regenerateScene(editor));editor.querySelector(".search-media").addEventListener("click",()=>searchMedia(editor));editor.querySelector(".generate-ai").addEventListener("click",()=>generateAiImage(editor));});}
+function bindRecentProjects(){document.querySelectorAll(".recent-project").forEach(item=>{const open=()=>loadProject(item.dataset.projectId);item.addEventListener("click",open);item.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();open();}});});}
 
 form.addEventListener("submit",async(event)=>{event.preventDefault();submit.disabled=true;status.textContent="LLM генерирует storyboard...";result.innerHTML="";const body={prompt:document.getElementById("prompt").value,project_type:document.getElementById("project_type").value,aspect_ratio:document.getElementById("aspect_ratio").value,duration_seconds:Number(document.getElementById("duration_seconds").value),language:"ru"};try{const response=await fetch("/api/projects",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const data=await response.json();if(!response.ok)throw new Error(data.detail||"Unknown error");status.textContent="Готово. Теперь можно редактировать сцены и подбирать медиа.";renderProject(data);setProjectInUrl(data.id);}catch(error){status.innerHTML=`<span class="error">Ошибка: ${escapeHtml(error.message)}</span>`;}finally{submit.disabled=false;}});
 
 bindRecentProjects();
 const initialProjectId=new URLSearchParams(window.location.search).get("project");
-if(initialProjectId) loadProject(initialProjectId);
+if(initialProjectId)loadProject(initialProjectId);
 </script>
 </body>
 </html>
