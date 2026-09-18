@@ -31,6 +31,18 @@ class MediaAsset(BaseModel):
     local_path: str | None = None
 
 
+class AudioAsset(BaseModel):
+    provider: str
+    asset_id: str
+    audio_url: str
+    download_url: str
+    format: str = "mp3"
+    voice: str = ""
+    model: str = ""
+    label: str = ""
+    local_path: str | None = None
+
+
 class Scene(BaseModel):
     id: str
     title: str
@@ -41,6 +53,7 @@ class Scene(BaseModel):
     visual_prompt: str
     media_search_query: str = ""
     selected_media: MediaAsset | None = None
+    selected_audio: AudioAsset | None = None
 
 
 class SceneUpdate(BaseModel):
