@@ -9,12 +9,12 @@ from httpx import HTTPError
 from app.config import settings
 from app.providers.llm.llama_cpp import LlamaCppProvider
 from app.providers.media.router import media_router
-from app.providers.tts.openai_tts import openai_tts_provider
+from app.providers.tts.router import tts_router
 from app.schemas import CreateProjectRequest, MediaAsset, Project, SceneUpdate
 from app.storage import project_store
 
 
-app = FastAPI(title="VideoGen Studio", version="0.6.0")
+app = FastAPI(title="VideoGen Studio", version="0.7.0")
 templates = Jinja2Templates(directory="app/templates")
 llm = LlamaCppProvider()
 
@@ -70,11 +70,10 @@ def _character_reference_path(project: Project) -> Path | None:
     reference = project.character_reference
     if reference is None or not reference.local_path:
         return None
-    filename = Path(reference.local_path).name
-    return project_store.media_file(project.id, filename)
+    return project_store.media_file(project.id, Path(reference.local_path).name)
 
 
-def _openai_error_detail(exc: HTTPError) -> str:
+def _error_detail(exc: Exception) -> str:
     response = getattr(exc, "response", None)
     detail = response.text[:1000] if response is not None else str(exc)
     return detail or exc.__class__.__name__
@@ -89,15 +88,22 @@ def _scene_speech_text(scene) -> str:
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
+    tts_status = tts_router.status()
+    media_status = media_router.status()
     return templates.TemplateResponse(
         request=request,
         name="index.html",
         context={
             "projects": project_store.list_projects()[:10],
             "llm_url": settings.llm_base_url,
-            "media_status": media_router.status(),
-            "tts_enabled": openai_tts_provider.enabled,
-            "tts_voice": settings.openai_tts_voice,
+            "media_status": media_status,
+            "tts_enabled": bool(tts_status["piper"] or tts_status["openai"]),
+            "tts_voice": (
+                settings.piper_model.stem
+                if settings.tts_provider == "piper" and tts_status["piper"]
+                else settings.openai_tts_voice
+            ),
+            "tts_status": tts_status,
         },
     )
 
@@ -109,17 +115,13 @@ async def health():
         "llm_provider": settings.llm_provider,
         "llm_url": settings.llm_base_url,
         "media_providers": media_router.status(),
-        "tts": {
-            "openai": openai_tts_provider.enabled,
-            "model": settings.openai_tts_model,
-            "voice": settings.openai_tts_voice,
-        },
+        "tts": tts_router.status(),
     }
 
 
 @app.get("/api/media/status")
 async def media_status():
-    return media_router.status()
+    return {"media": media_router.status(), "tts": tts_router.status()}
 
 
 @app.get("/api/projects")
@@ -180,36 +182,28 @@ async def generate_character_reference(project_id: str):
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    provider = media_router.openai_image
-    if not provider.enabled:
-        raise HTTPException(status_code=503, detail="OpenAI Image is not configured. Add OPENAI_API_KEY to .env")
-
-    characters = "; ".join(project.storyboard.characters).strip()
-    if not characters:
-        characters = "the main recurring character described by the project story"
-
+    characters = "; ".join(project.storyboard.characters).strip() or (
+        "the main recurring character described by the project story"
+    )
     prompt = (
         "Create a clean character reference image for a recurring animated character.\n"
         f"Character description: {characters}\n"
         f"Project visual style: {project.storyboard.visual_style}\n"
-        "Show the same main character clearly, full body, neutral standing pose, simple uncluttered "
+        "Show the main character clearly, full body, neutral standing pose, simple uncluttered "
         "background, readable silhouette, consistent proportions, colors, face, clothing and distinctive "
-        "features. This image will be used as the visual identity reference for later scenes. "
-        "Do not include captions, labels, text, watermark, extra characters or a character sheet grid."
+        "features. Do not include captions, labels, text, watermark, extra characters or a grid."
     )
 
     try:
-        asset = await provider.generate(
+        asset = await media_router.generate_image(
             prompt=prompt,
             aspect_ratio="1:1",
             project_id=project.id,
             scene_id="character-reference",
             media_dir=project_store.media_dir(project.id),
         )
-    except HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"OpenAI Image request failed: {_openai_error_detail(exc)}") from exc
-    except (ValueError, RuntimeError, OSError) as exc:
-        raise HTTPException(status_code=502, detail=f"Character reference generation failed: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Character reference generation failed: {_error_detail(exc)}") from exc
 
     project.character_reference = asset
     project_store.save(project)
@@ -225,9 +219,8 @@ async def update_scene(project_id: str, scene_id: str, payload: SceneUpdate):
     for index, scene in enumerate(project.storyboard.scenes):
         if scene.id != scene_id:
             continue
-
         speech_changed = scene.narration != payload.narration or scene.dialogue != payload.dialogue
-        updated = scene.model_copy(
+        project.storyboard.scenes[index] = scene.model_copy(
             update={
                 "title": payload.title,
                 "duration_seconds": payload.duration_seconds,
@@ -239,8 +232,6 @@ async def update_scene(project_id: str, scene_id: str, payload: SceneUpdate):
                 "selected_audio": None if speech_changed else scene.selected_audio,
             }
         )
-        project.storyboard.scenes[index] = updated
-        project.request.duration_seconds = round(sum(item.duration_seconds for item in project.storyboard.scenes))
         project_store.save(project)
         return project
     raise HTTPException(status_code=404, detail="Scene not found")
@@ -261,7 +252,6 @@ async def regenerate_scene(project_id: str, scene_id: str):
             raise HTTPException(status_code=502, detail=f"LLM backend request failed: {exc}") from exc
         except (ValueError, KeyError) as exc:
             raise HTTPException(status_code=502, detail=f"LLM returned an invalid scene: {exc}") from exc
-
         regenerated.selected_media = scene.selected_media
         regenerated.selected_audio = None
         project.storyboard.scenes[index] = regenerated
@@ -287,7 +277,7 @@ async def search_scene_media(
     if not search_query:
         raise HTTPException(status_code=400, detail="Media search query is empty")
     if not media_router.search_enabled():
-        raise HTTPException(status_code=503, detail="No stock media providers enabled. Add PEXELS_API_KEY and/or PIXABAY_API_KEY to .env")
+        raise HTTPException(status_code=503, detail="No stock media providers enabled")
 
     assets = await media_router.search(search_query, limit_per_provider=4)
     return {"query": search_query, "providers": media_router.status(), "results": assets}
@@ -302,10 +292,6 @@ async def generate_scene_ai_media(project_id: str, scene_id: str):
     if scene is None:
         raise HTTPException(status_code=404, detail="Scene not found")
 
-    provider = media_router.openai_image
-    if not provider.enabled:
-        raise HTTPException(status_code=503, detail="OpenAI Image is not configured. Add OPENAI_API_KEY to .env")
-
     characters = "; ".join(project.storyboard.characters)
     reference_path = _character_reference_path(project)
     prompt_parts = [
@@ -316,17 +302,15 @@ async def generate_scene_ai_media(project_id: str, scene_id: str):
         prompt_parts.append(f"Characters: {characters}")
     if reference_path is not None:
         prompt_parts.append(
-            "The attached image is the canonical character reference. Preserve the character's identity, "
-            "face, body proportions, fur/colors, clothing and distinctive features. Change only pose, "
-            "camera, expression and environment as required by this scene."
+            "The attached image is the canonical character reference. Preserve identity, face, body "
+            "proportions, colors, clothing and distinctive features. Change only pose, camera, expression "
+            "and environment as required by this scene."
         )
-    else:
-        prompt_parts.append("Keep character design coherent with the rest of the same animated project.")
     prompt_parts.append("No captions, no text, no watermark.")
     prompt = "\n".join(part for part in prompt_parts if part)
 
     try:
-        asset = await provider.generate(
+        asset = await media_router.generate_image(
             prompt=prompt,
             aspect_ratio=project.request.aspect_ratio,
             project_id=project.id,
@@ -334,10 +318,8 @@ async def generate_scene_ai_media(project_id: str, scene_id: str):
             media_dir=project_store.media_dir(project.id),
             reference_path=reference_path,
         )
-    except HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"OpenAI Image request failed: {_openai_error_detail(exc)}") from exc
-    except (ValueError, RuntimeError, OSError) as exc:
-        raise HTTPException(status_code=502, detail=f"OpenAI Image generation failed: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Image generation failed: {_error_detail(exc)}") from exc
 
     for index, item in enumerate(project.storyboard.scenes):
         if item.id == scene_id:
@@ -352,28 +334,23 @@ async def generate_scene_audio(project_id: str, scene_id: str):
     project = project_store.load(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
-
     scene = next((item for item in project.storyboard.scenes if item.id == scene_id), None)
     if scene is None:
         raise HTTPException(status_code=404, detail="Scene not found")
-    if not openai_tts_provider.enabled:
-        raise HTTPException(status_code=503, detail="OpenAI TTS is not configured. Add OPENAI_API_KEY to .env")
 
     speech_text = _scene_speech_text(scene)
     if not speech_text:
         raise HTTPException(status_code=400, detail="Scene has no narration or dialogue to synthesize")
 
     try:
-        asset = await openai_tts_provider.generate(
+        asset = await tts_router.generate(
             text=speech_text,
             project_id=project.id,
             scene_id=scene.id,
             audio_dir=project_store.audio_dir(project.id),
         )
-    except HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"OpenAI TTS request failed: {_openai_error_detail(exc)}") from exc
-    except (ValueError, RuntimeError, OSError) as exc:
-        raise HTTPException(status_code=502, detail=f"OpenAI TTS generation failed: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"TTS generation failed: {_error_detail(exc)}") from exc
 
     for index, item in enumerate(project.storyboard.scenes):
         if item.id == scene_id:
