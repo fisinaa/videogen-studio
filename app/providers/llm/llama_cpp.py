@@ -36,9 +36,13 @@ JSON schema:
   ]
 }
 
-The total scene duration should approximately match the requested duration.
-Keep scenes practical for later rendering with stock media, generated images/video,
-voice-over, subtitles and HyperFrames composition.
+Storyboard rules:
+- The SUM of all scene durations must be close to the requested target duration.
+- Prefer practical scenes of about 6-12 seconds each.
+- For a 180 second request, create roughly 15-25 scenes, not one long scene.
+- Keep narration/dialogue concise enough to fit inside each scene duration.
+- Keep scenes practical for later rendering with stock media, generated images/video,
+  voice-over, subtitles and HyperFrames composition.
 """
 
 
@@ -60,15 +64,40 @@ def _extract_json(text: str) -> dict:
         return json.loads(text[start : end + 1])
 
 
+def _duration_seconds(storyboard: Storyboard) -> float:
+    return sum(scene.duration_seconds for scene in storyboard.scenes)
+
+
+def _duration_is_acceptable(storyboard: Storyboard, target: int) -> bool:
+    if not storyboard.scenes:
+        return False
+    actual = _duration_seconds(storyboard)
+    lower = target * 0.85
+    upper = target * 1.15
+    return lower <= actual <= upper
+
+
 class LlamaCppProvider(LLMProvider):
-    async def create_storyboard(self, request: CreateProjectRequest) -> Storyboard:
+    async def _request_storyboard(
+        self,
+        request: CreateProjectRequest,
+        correction: str = "",
+    ) -> Storyboard:
+        target_scene_count = max(1, round(request.duration_seconds / 9))
         user_prompt = (
             "Create a storyboard.\n\n"
             f"User idea:\n{request.prompt}\n\n"
             f"Project type: {request.project_type}\n"
             f"Aspect ratio: {request.aspect_ratio}\n"
             f"Target duration: {request.duration_seconds} seconds\n"
+            f"Target scene count: about {target_scene_count}\n"
             f"Language for narration/dialogue: {request.language}\n"
+            f"{correction}"
+        )
+
+        dynamic_max_tokens = min(
+            3000,
+            max(settings.llm_max_tokens, target_scene_count * 120),
         )
 
         payload = {
@@ -78,7 +107,7 @@ class LlamaCppProvider(LLMProvider):
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": settings.llm_temperature,
-            "max_tokens": settings.llm_max_tokens,
+            "max_tokens": dynamic_max_tokens,
         }
 
         headers = {"Content-Type": "application/json"}
@@ -99,3 +128,30 @@ class LlamaCppProvider(LLMProvider):
         content = data["choices"][0]["message"]["content"]
         parsed = _extract_json(content)
         return Storyboard.model_validate(parsed)
+
+    async def create_storyboard(self, request: CreateProjectRequest) -> Storyboard:
+        storyboard = await self._request_storyboard(request)
+
+        if _duration_is_acceptable(storyboard, request.duration_seconds):
+            return storyboard
+
+        actual = _duration_seconds(storyboard)
+        correction = (
+            "\nIMPORTANT CORRECTION:\n"
+            f"A previous attempt totaled only {actual:.1f} seconds, but the requested "
+            f"duration is {request.duration_seconds} seconds. Regenerate the COMPLETE "
+            "storyboard with enough distinct scenes so that the sum of duration_seconds "
+            "is within +/-15% of the requested duration. Do not return a summary or a "
+            "single sample scene.\n"
+        )
+        storyboard = await self._request_storyboard(request, correction=correction)
+
+        if not _duration_is_acceptable(storyboard, request.duration_seconds):
+            actual = _duration_seconds(storyboard)
+            raise ValueError(
+                "Storyboard duration mismatch after retry: "
+                f"requested={request.duration_seconds}s, generated={actual:.1f}s, "
+                f"scenes={len(storyboard.scenes)}"
+            )
+
+        return storyboard
