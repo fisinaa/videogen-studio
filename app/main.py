@@ -12,7 +12,7 @@ from app.schemas import CreateProjectRequest, MediaAsset, Project, SceneUpdate
 from app.storage import project_store
 
 
-app = FastAPI(title="VideoGen Studio", version="0.4.0")
+app = FastAPI(title="VideoGen Studio", version="0.4.1")
 templates = Jinja2Templates(directory="app/templates")
 llm = LlamaCppProvider()
 
@@ -63,7 +63,10 @@ async def get_project_media(project_id: str, filename: str):
     path = project_store.media_file(project_id, filename)
     if path is None:
         raise HTTPException(status_code=404, detail="Media file not found")
-    return FileResponse(path)
+    return FileResponse(
+        path,
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 
 @app.post("/api/projects")
@@ -227,7 +230,10 @@ async def generate_scene_ai_media(project_id: str, scene_id: str):
             media_dir=project_store.media_dir(project.id),
         )
     except HTTPError as exc:
-        detail = exc.response.text[:1000] if exc.response is not None else str(exc)
+        response = getattr(exc, "response", None)
+        detail = response.text[:1000] if response is not None else str(exc)
+        if not detail:
+            detail = exc.__class__.__name__
         raise HTTPException(
             status_code=502,
             detail=f"OpenAI Image request failed: {detail}",
