@@ -24,6 +24,23 @@ class OpenAIImageProvider:
             "1:1": ("1024x1024", 1024, 1024),
         }.get(aspect_ratio, ("1536x1024", 1536, 1024))
 
+    def _decode_image_response(self, data: dict) -> tuple[bytes | None, str]:
+        try:
+            first = data["data"][0]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ValueError("OpenAI Image response did not contain image data") from exc
+
+        source_url = f"openai://{settings.openai_image_model}"
+        encoded = first.get("b64_json") if isinstance(first, dict) else None
+        if encoded:
+            try:
+                return base64.b64decode(encoded), source_url
+            except (ValueError, TypeError) as exc:
+                raise ValueError("OpenAI Image returned invalid base64 image data") from exc
+
+        remote_url = first.get("url") if isinstance(first, dict) else None
+        return None, remote_url or source_url
+
     async def generate(
         self,
         *,
@@ -32,51 +49,63 @@ class OpenAIImageProvider:
         project_id: str,
         scene_id: str,
         media_dir: Path,
+        reference_path: Path | None = None,
     ) -> MediaAsset:
         if not self.enabled:
             raise RuntimeError("OpenAI Image is not configured. Set OPENAI_API_KEY in .env.")
 
         size, width, height = self._size_for_aspect_ratio(aspect_ratio)
-        endpoint = settings.openai_base_url.rstrip("/") + "/images/generations"
-        payload = {
-            "model": settings.openai_image_model,
-            "prompt": prompt,
-            "size": size,
-            "quality": settings.openai_image_quality,
-            "n": 1,
-        }
-        headers = {
-            "Authorization": f"Bearer {settings.openai_api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = {"Authorization": f"Bearer {settings.openai_api_key}"}
         timeout = httpx.Timeout(settings.openai_image_timeout_seconds)
 
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(endpoint, headers=headers, json=payload)
+            if reference_path is not None:
+                if not reference_path.is_file():
+                    raise ValueError(f"Reference image not found: {reference_path}")
+
+                endpoint = settings.openai_base_url.rstrip("/") + "/images/edits"
+                data_fields = {
+                    "model": settings.openai_image_model,
+                    "prompt": prompt,
+                    "size": size,
+                    "quality": settings.openai_image_quality,
+                    "output_format": "png",
+                }
+                files = [
+                    (
+                        "image[]",
+                        (reference_path.name, reference_path.read_bytes(), "image/png"),
+                    )
+                ]
+                response = await client.post(
+                    endpoint,
+                    headers=headers,
+                    data=data_fields,
+                    files=files,
+                )
+            else:
+                endpoint = settings.openai_base_url.rstrip("/") + "/images/generations"
+                payload = {
+                    "model": settings.openai_image_model,
+                    "prompt": prompt,
+                    "size": size,
+                    "quality": settings.openai_image_quality,
+                    "n": 1,
+                }
+                response = await client.post(
+                    endpoint,
+                    headers={**headers, "Content-Type": "application/json"},
+                    json=payload,
+                )
+
             response.raise_for_status()
             data = response.json()
+            image_bytes, source_url = self._decode_image_response(data)
 
-            try:
-                first = data["data"][0]
-            except (KeyError, IndexError, TypeError) as exc:
-                raise ValueError("OpenAI Image response did not contain image data") from exc
-
-            image_bytes: bytes | None = None
-            source_url = f"openai://{settings.openai_image_model}"
-
-            encoded = first.get("b64_json") if isinstance(first, dict) else None
-            if encoded:
-                try:
-                    image_bytes = base64.b64decode(encoded)
-                except (ValueError, TypeError) as exc:
-                    raise ValueError("OpenAI Image returned invalid base64 image data") from exc
-            else:
-                remote_url = first.get("url") if isinstance(first, dict) else None
-                if remote_url:
-                    image_response = await client.get(remote_url)
-                    image_response.raise_for_status()
-                    image_bytes = image_response.content
-                    source_url = remote_url
+            if image_bytes is None and source_url.startswith("http"):
+                image_response = await client.get(source_url)
+                image_response.raise_for_status()
+                image_bytes = image_response.content
 
             if not image_bytes:
                 raise ValueError("OpenAI Image response contained neither b64_json nor image URL")
@@ -87,6 +116,7 @@ class OpenAIImageProvider:
         output_path.write_bytes(image_bytes)
 
         local_url = f"/api/projects/{project_id}/media/{filename}"
+        mode = "reference edit" if reference_path is not None else "generation"
         return MediaAsset(
             provider=self.name,
             asset_id=filename,
@@ -99,7 +129,8 @@ class OpenAIImageProvider:
             duration_seconds=None,
             author="OpenAI",
             label=(
-                f"{settings.openai_image_model} · {settings.openai_image_quality} · {scene_id}"
+                f"{settings.openai_image_model} · {settings.openai_image_quality} · "
+                f"{mode} · {scene_id}"
             ),
             local_path=f"media/{filename}",
         )
