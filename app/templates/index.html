@@ -52,7 +52,7 @@
 <main>
   <h1>VideoGen Studio</h1>
   <div class="muted">LLM backend: {{ llm_url }}</div>
-  <div class="muted">Media: Pexels={{ 'ON' if media_status.pexels else 'OFF' }}, Pixabay={{ 'ON' if media_status.pixabay else 'OFF' }}, Qwen Image={{ 'ON' if media_status.qwen_image else 'OFF' }}</div>
+  <div class="muted">Media: Pexels={{ 'ON' if media_status.pexels else 'OFF' }}, Pixabay={{ 'ON' if media_status.pixabay else 'OFF' }}, OpenAI Image={{ 'ON' if media_status.openai_image else 'OFF' }}</div>
 
   <div class="grid">
     <section class="card">
@@ -145,13 +145,13 @@ async function selectMedia(editor,asset){const sceneId=editor.dataset.sceneId,me
 
 async function generateAiImage(editor){
   const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"),button=editor.querySelector(".generate-ai");
-  button.disabled=true;message.textContent="Qwen Image генерирует изображение...";
+  button.disabled=true;message.textContent="OpenAI Image генерирует изображение...";
   try{
     await saveScene(editor);
     const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/media/generate-ai`,{method:"POST"});
     const data=await response.json();
     if(!response.ok)throw new Error(data.detail||"AI image generation failed");
-    renderProject(data);setProjectInUrl(data.id);status.textContent=`AI-изображение для ${sceneId} сгенерировано, скачано локально и выбрано.`;
+    renderProject(data);setProjectInUrl(data.id);status.textContent=`AI-изображение для ${sceneId} сгенерировано, сохранено локально и выбрано.`;
   }catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;button.disabled=false;}
 }
 
