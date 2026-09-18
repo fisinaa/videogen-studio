@@ -13,44 +13,38 @@
     }
     * { box-sizing: border-box; }
     body { margin: 0; background: #0b0d12; }
-    main { width: min(1180px, 94vw); margin: 0 auto; padding: 42px 0 80px; }
+    main { width: min(1280px, 94vw); margin: 0 auto; padding: 42px 0 80px; }
     h1 { font-size: 42px; margin: 0 0 8px; }
     .muted { color: #969cab; }
-    .grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 24px; margin-top: 30px; }
-    .card {
-      border: 1px solid #242936; border-radius: 18px; padding: 22px;
-      background: #12151d;
-    }
+    .grid { display: grid; grid-template-columns: .9fr 1.1fr; gap: 24px; margin-top: 30px; }
+    .card { border: 1px solid #242936; border-radius: 18px; padding: 22px; background: #12151d; }
     textarea, select, input {
-      width: 100%; margin-top: 7px; margin-bottom: 16px; padding: 12px 14px;
-      background: #0d1016; color: #fff; border: 1px solid #303646;
-      border-radius: 10px; font: inherit;
+      width: 100%; margin-top: 7px; margin-bottom: 14px; padding: 11px 13px;
+      background: #0d1016; color: #fff; border: 1px solid #303646; border-radius: 10px; font: inherit;
     }
-    textarea { min-height: 185px; resize: vertical; }
+    textarea { min-height: 100px; resize: vertical; }
+    #prompt { min-height: 185px; }
     label { display: block; font-size: 14px; color: #c7cbd4; }
     .row { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
     button {
-      border: 0; border-radius: 10px; padding: 13px 18px; font-weight: 700;
-      cursor: pointer; background: #7c5cff; color: white; font-size: 15px;
+      border: 0; border-radius: 10px; padding: 11px 15px; font-weight: 700;
+      cursor: pointer; background: #7c5cff; color: white; font-size: 14px;
     }
+    button.secondary { background: #252b37; }
+    button.warn { background: #6247aa; }
     button:disabled { opacity: .55; cursor: wait; }
-    pre {
-      white-space: pre-wrap; overflow-wrap: anywhere; background: #0b0d12;
-      border-radius: 12px; padding: 16px; min-height: 220px; color: #cad1df;
-    }
-    .scene {
-      padding: 15px 0; border-top: 1px solid #252b37;
-    }
+    .scene { padding: 18px 0; border-top: 1px solid #252b37; }
     .scene:first-child { border-top: 0; }
-    .badge {
-      display: inline-block; padding: 3px 8px; border-radius: 999px;
-      background: #25203f; color: #bdafff; font-size: 12px;
-    }
-    .summary {
-      display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0 4px;
-    }
+    .scene-editor { background: #0e1118; border: 1px solid #252b37; border-radius: 14px; padding: 16px; margin: 14px 0; }
+    .scene-head { display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap; }
+    .scene-actions { display:flex; gap:8px; flex-wrap:wrap; }
+    .badge { display:inline-block; padding:3px 8px; border-radius:999px; background:#25203f; color:#bdafff; font-size:12px; }
+    .summary { display:flex; gap:8px; flex-wrap:wrap; margin:14px 0 4px; }
     .error { color: #ff8d8d; }
-    @media (max-width: 850px) {
+    .success { color: #8ee59a; }
+    .dialogue-row { display:flex; gap:8px; align-items:center; }
+    .dialogue-row input { margin-bottom:8px; }
+    @media (max-width: 900px) {
       .grid { grid-template-columns: 1fr; }
       .row { grid-template-columns: 1fr; }
     }
@@ -67,9 +61,8 @@
       <form id="project-form">
         <label>
           Что хотим создать?
-          <textarea id="prompt">Сделай первую сцену оригинального приключенческого мультфильма о маленьком мышонке, которого на игрушечном кораблике уносит течением далеко от дома. Атмосфера: природа, опасность, любопытство, без дословного пересказа существующих произведений.</textarea>
+          <textarea id="prompt">Сделай первую серию оригинального приключенческого мультфильма о маленьком мышонке, которого на игрушечном кораблике уносит течением далеко от дома. Атмосфера: природа, опасность, любопытство, без дословного пересказа существующих произведений.</textarea>
         </label>
-
         <div class="row">
           <label>Тип
             <select id="project_type">
@@ -79,7 +72,6 @@
               <option value="reel">Reel</option>
             </select>
           </label>
-
           <label>Формат
             <select id="aspect_ratio">
               <option value="16:9">16:9</option>
@@ -87,18 +79,16 @@
               <option value="1:1">1:1</option>
             </select>
           </label>
-
           <label>Длительность, сек
-            <input id="duration_seconds" type="number" min="10" max="7200" value="60">
+            <input id="duration_seconds" type="number" min="10" max="7200" value="180">
           </label>
         </div>
-
         <button id="submit" type="submit">Создать storyboard</button>
       </form>
     </section>
 
     <section class="card">
-      <h2>Результат</h2>
+      <h2>Storyboard editor</h2>
       <div id="status" class="muted">Жду задачу.</div>
       <div id="result"></div>
     </section>
@@ -125,13 +115,137 @@ const form = document.getElementById("project-form");
 const result = document.getElementById("result");
 const status = document.getElementById("status");
 const submit = document.getElementById("submit");
+let currentProject = null;
 
 function escapeHtml(value) {
-  return String(value)
+  return String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function projectDuration(project) {
+  return project.storyboard.scenes.reduce((sum, scene) => sum + Number(scene.duration_seconds || 0), 0);
+}
+
+function sceneEditor(scene) {
+  const dialogueText = (scene.dialogue || []).join("\n");
+  return `
+    <div class="scene-editor" data-scene-id="${escapeHtml(scene.id)}">
+      <div class="scene-head">
+        <div><span class="badge">${escapeHtml(scene.id)}</span></div>
+        <div class="scene-actions">
+          <button class="secondary save-scene" type="button">Сохранить</button>
+          <button class="warn regen-scene" type="button">Перегенерировать</button>
+        </div>
+      </div>
+      <label>Название
+        <input class="f-title" value="${escapeHtml(scene.title)}">
+      </label>
+      <label>Длительность, сек
+        <input class="f-duration" type="number" min="0.1" step="0.1" value="${escapeHtml(scene.duration_seconds)}">
+      </label>
+      <label>Наррация
+        <textarea class="f-narration">${escapeHtml(scene.narration)}</textarea>
+      </label>
+      <label>Диалоги — по одной реплике на строку
+        <textarea class="f-dialogue">${escapeHtml(dialogueText)}</textarea>
+      </label>
+      <label>Действие
+        <textarea class="f-action">${escapeHtml(scene.action)}</textarea>
+      </label>
+      <label>Visual prompt
+        <textarea class="f-visual">${escapeHtml(scene.visual_prompt)}</textarea>
+      </label>
+      <label>Media search query
+        <input class="f-search" value="${escapeHtml(scene.media_search_query)}">
+      </label>
+      <div class="scene-message muted"></div>
+    </div>`;
+}
+
+function renderProject(project) {
+  currentProject = project;
+  const sb = project.storyboard;
+  const totalDuration = projectDuration(project);
+  result.innerHTML =
+    `<h3>${escapeHtml(sb.title)}</h3>` +
+    `<p>${escapeHtml(sb.logline)}</p>` +
+    `<div class="muted">${escapeHtml(sb.visual_style)}</div>` +
+    `<div class="summary">` +
+      `<span class="badge">Сцен: ${escapeHtml(sb.scenes.length)}</span>` +
+      `<span class="badge">Storyboard: ${escapeHtml(totalDuration.toFixed(1))}s</span>` +
+      `<span class="badge">Project ID: ${escapeHtml(project.id)}</span>` +
+    `</div>` +
+    sb.scenes.map(sceneEditor).join("");
+
+  bindSceneButtons();
+}
+
+function readSceneEditor(editor) {
+  return {
+    title: editor.querySelector(".f-title").value.trim(),
+    duration_seconds: Number(editor.querySelector(".f-duration").value),
+    narration: editor.querySelector(".f-narration").value,
+    dialogue: editor.querySelector(".f-dialogue").value
+      .split("\n")
+      .map(v => v.trim())
+      .filter(Boolean),
+    action: editor.querySelector(".f-action").value.trim(),
+    visual_prompt: editor.querySelector(".f-visual").value.trim(),
+    media_search_query: editor.querySelector(".f-search").value.trim()
+  };
+}
+
+async function saveScene(editor) {
+  const sceneId = editor.dataset.sceneId;
+  const message = editor.querySelector(".scene-message");
+  const button = editor.querySelector(".save-scene");
+  button.disabled = true;
+  message.textContent = "Сохраняю...";
+
+  try {
+    const response = await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}`, {
+      method: "PUT",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(readSceneEditor(editor))
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "Save failed");
+    currentProject = data;
+    message.innerHTML = `<span class="success">Сохранено. Общая длительность: ${projectDuration(data).toFixed(1)}s</span>`;
+  } catch (error) {
+    message.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function regenerateScene(editor) {
+  const sceneId = editor.dataset.sceneId;
+  const message = editor.querySelector(".scene-message");
+  const button = editor.querySelector(".regen-scene");
+  button.disabled = true;
+  message.textContent = "LLM перегенерирует только эту сцену...";
+
+  try {
+    const response = await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/regenerate`, {method: "POST"});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "Regeneration failed");
+    renderProject(data);
+    status.textContent = `Сцена ${sceneId} перегенерирована. Project ID: ${data.id}`;
+  } catch (error) {
+    message.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
+    button.disabled = false;
+  }
+}
+
+function bindSceneButtons() {
+  document.querySelectorAll(".scene-editor").forEach(editor => {
+    editor.querySelector(".save-scene").addEventListener("click", () => saveScene(editor));
+    editor.querySelector(".regen-scene").addEventListener("click", () => regenerateScene(editor));
+  });
 }
 
 form.addEventListener("submit", async (event) => {
@@ -154,40 +268,12 @@ form.addEventListener("submit", async (event) => {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify(body)
     });
-
     const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.detail || "Unknown error");
-    }
-
-    status.textContent = "Готово. Project ID: " + data.id;
-    const sb = data.storyboard;
-    const totalDuration = sb.scenes.reduce(
-      (sum, scene) => sum + Number(scene.duration_seconds || 0),
-      0
-    );
-
-    result.innerHTML =
-      "<h3>" + escapeHtml(sb.title) + "</h3>" +
-      "<p>" + escapeHtml(sb.logline) + "</p>" +
-      "<div class='muted'>" + escapeHtml(sb.visual_style) + "</div>" +
-      "<div class='summary'>" +
-        "<span class='badge'>Сцен: " + escapeHtml(sb.scenes.length) + "</span>" +
-        "<span class='badge'>Storyboard: " + escapeHtml(totalDuration.toFixed(1)) + "s</span>" +
-        "<span class='badge'>Запрошено: " + escapeHtml(body.duration_seconds) + "s</span>" +
-      "</div>" +
-      sb.scenes.map(scene =>
-        "<div class='scene'>" +
-        "<span class='badge'>" + escapeHtml(scene.id) + " · " +
-        escapeHtml(scene.duration_seconds) + "s</span>" +
-        "<h4>" + escapeHtml(scene.title) + "</h4>" +
-        "<p><b>Действие:</b> " + escapeHtml(scene.action) + "</p>" +
-        "<p><b>Наррация:</b> " + escapeHtml(scene.narration) + "</p>" +
-        "<p class='muted'><b>Visual:</b> " + escapeHtml(scene.visual_prompt) + "</p>" +
-        "</div>"
-      ).join("");
+    if (!response.ok) throw new Error(data.detail || "Unknown error");
+    status.textContent = "Готово. Теперь можно редактировать отдельные сцены.";
+    renderProject(data);
   } catch (error) {
-    status.innerHTML = "<span class='error'>Ошибка: " + escapeHtml(error.message) + "</span>";
+    status.innerHTML = `<span class="error">Ошибка: ${escapeHtml(error.message)}</span>`;
   } finally {
     submit.disabled = false;
   }
