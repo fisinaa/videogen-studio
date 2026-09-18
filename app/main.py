@@ -1,3 +1,4 @@
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -12,9 +13,64 @@ from app.schemas import CreateProjectRequest, MediaAsset, Project, SceneUpdate
 from app.storage import project_store
 
 
-app = FastAPI(title="VideoGen Studio", version="0.4.1")
+app = FastAPI(title="VideoGen Studio", version="0.4.2")
 templates = Jinja2Templates(directory="app/templates")
 llm = LlamaCppProvider()
+
+
+def _image_dimensions(aspect_ratio: str) -> tuple[int, int]:
+    return {
+        "16:9": (1536, 1024),
+        "9:16": (1024, 1536),
+        "1:1": (1024, 1024),
+    }.get(aspect_ratio, (1536, 1024))
+
+
+def _asset_from_local_openai_file(project: Project, scene_id: str, path: Path) -> MediaAsset:
+    width, height = _image_dimensions(project.request.aspect_ratio)
+    local_url = f"/api/projects/{project.id}/media/{path.name}"
+    return MediaAsset(
+        provider="openai_image",
+        asset_id=path.name,
+        media_type="image",
+        preview_url=local_url,
+        source_url=f"openai://recovered/{path.name}",
+        download_url=local_url,
+        width=width,
+        height=height,
+        duration_seconds=None,
+        author="OpenAI",
+        label=f"Recovered local OpenAI image · {scene_id}",
+        local_path=f"media/{path.name}",
+    )
+
+
+def _recover_local_openai_media(project: Project) -> int:
+    media_dir = project_store.media_dir(project.id)
+    recovered = 0
+
+    for index, scene in enumerate(project.storyboard.scenes):
+        if scene.selected_media is not None:
+            continue
+
+        candidates = [
+            path
+            for path in media_dir.glob(f"{scene.id}-openai-*.png")
+            if path.is_file()
+        ]
+        if not candidates:
+            continue
+
+        latest = max(candidates, key=lambda path: path.stat().st_mtime)
+        asset = _asset_from_local_openai_file(project, scene.id, latest)
+        project.storyboard.scenes[index] = scene.model_copy(
+            update={"selected_media": asset}
+        )
+        recovered += 1
+
+    if recovered:
+        project_store.save(project)
+    return recovered
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -56,6 +112,19 @@ async def get_project(project_id: str):
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
+
+
+@app.post("/api/projects/{project_id}/media/recover")
+async def recover_project_media(project_id: str):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    recovered = _recover_local_openai_media(project)
+    return {
+        "recovered": recovered,
+        "project": project,
+    }
 
 
 @app.get("/api/projects/{project_id}/media/{filename}")
