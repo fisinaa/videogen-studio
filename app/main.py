@@ -198,14 +198,11 @@ async def generate_scene_ai_media(project_id: str, scene_id: str):
     if scene is None:
         raise HTTPException(status_code=404, detail="Scene not found")
 
-    provider = media_router.qwen_image
+    provider = media_router.openai_image
     if not provider.enabled:
         raise HTTPException(
             status_code=503,
-            detail=(
-                "Qwen Image is not configured. Add DASHSCOPE_API_KEY and "
-                "DASHSCOPE_BASE_URL to .env"
-            ),
+            detail="OpenAI Image is not configured. Add OPENAI_API_KEY to .env",
         )
 
     characters = "; ".join(project.storyboard.characters)
@@ -233,12 +230,12 @@ async def generate_scene_ai_media(project_id: str, scene_id: str):
         detail = exc.response.text[:1000] if exc.response is not None else str(exc)
         raise HTTPException(
             status_code=502,
-            detail=f"Qwen Image request failed: {detail}",
+            detail=f"OpenAI Image request failed: {detail}",
         ) from exc
     except (ValueError, RuntimeError, OSError) as exc:
         raise HTTPException(
             status_code=502,
-            detail=f"Qwen Image generation failed: {exc}",
+            detail=f"OpenAI Image generation failed: {exc}",
         ) from exc
 
     for index, item in enumerate(project.storyboard.scenes):
