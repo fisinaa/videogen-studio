@@ -1,8 +1,11 @@
 import asyncio
+from pathlib import Path
 
+from app.config import settings
 from app.providers.media.openai_image import OpenAIImageProvider
 from app.providers.media.pexels import PexelsProvider
 from app.providers.media.pixabay import PixabayProvider
+from app.providers.media.stable_diffusion_cpp import StableDiffusionCppProvider
 from app.schemas import MediaAsset
 
 
@@ -10,10 +13,13 @@ class MediaRouter:
     def __init__(self) -> None:
         self.search_providers = [PexelsProvider(), PixabayProvider()]
         self.openai_image = OpenAIImageProvider()
+        self.local_image = StableDiffusionCppProvider()
 
-    def status(self) -> dict[str, bool]:
+    def status(self) -> dict:
         result = {provider.name: provider.enabled for provider in self.search_providers}
         result[self.openai_image.name] = self.openai_image.enabled
+        result[self.local_image.name] = self.local_image.enabled
+        result["image_selected"] = settings.image_provider
         return result
 
     def search_enabled(self) -> bool:
@@ -36,6 +42,44 @@ class MediaRouter:
             assets.extend(batch)
 
         return assets
+
+    def _image_providers(self):
+        mode = settings.image_provider.strip().lower()
+        if mode == "local":
+            return [self.local_image]
+        if mode == "openai":
+            return [self.openai_image]
+        return [self.local_image, self.openai_image]
+
+    async def generate_image(
+        self,
+        *,
+        prompt: str,
+        aspect_ratio: str,
+        project_id: str,
+        scene_id: str,
+        media_dir: Path,
+        reference_path: Path | None = None,
+    ) -> MediaAsset:
+        errors: list[str] = []
+        for provider in self._image_providers():
+            if not provider.enabled:
+                errors.append(f"{provider.name}: disabled")
+                continue
+            try:
+                return await provider.generate(
+                    prompt=prompt,
+                    aspect_ratio=aspect_ratio,
+                    project_id=project_id,
+                    scene_id=scene_id,
+                    media_dir=media_dir,
+                    reference_path=reference_path,
+                )
+            except Exception as exc:
+                errors.append(f"{provider.name}: {exc}")
+                if settings.image_provider.strip().lower() != "auto":
+                    raise
+        raise RuntimeError("No image provider succeeded: " + "; ".join(errors))
 
 
 media_router = MediaRouter()
