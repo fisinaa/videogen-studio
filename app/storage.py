@@ -1,8 +1,13 @@
 import json
+import re
 from pathlib import Path
 
 from app.config import settings
 from app.schemas import Project
+
+
+PROJECT_ID_RE = re.compile(r"^[a-f0-9]{12}$")
+SAFE_FILENAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 class ProjectStore:
@@ -10,11 +15,27 @@ class ProjectStore:
         self.root = root or settings.videogen_projects_dir
         self.root.mkdir(parents=True, exist_ok=True)
 
+    def _project_dir(self, project_id: str) -> Path:
+        if not PROJECT_ID_RE.fullmatch(project_id):
+            raise ValueError("Invalid project id")
+        return self.root / project_id
+
     def _project_path(self, project_id: str) -> Path:
-        return self.root / project_id / "project.json"
+        return self._project_dir(project_id) / "project.json"
+
+    def media_dir(self, project_id: str) -> Path:
+        path = self._project_dir(project_id) / "media"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def media_file(self, project_id: str, filename: str) -> Path | None:
+        if not SAFE_FILENAME_RE.fullmatch(filename):
+            return None
+        path = self.media_dir(project_id) / filename
+        return path if path.is_file() else None
 
     def save(self, project: Project) -> Path:
-        project_dir = self.root / project.id
+        project_dir = self._project_dir(project.id)
         project_dir.mkdir(parents=True, exist_ok=True)
 
         output = self._project_path(project.id)
@@ -25,7 +46,10 @@ class ProjectStore:
         return output
 
     def load(self, project_id: str) -> Project | None:
-        path = self._project_path(project_id)
+        try:
+            path = self._project_path(project_id)
+        except ValueError:
+            return None
         if not path.exists():
             return None
         try:
