@@ -6,7 +6,7 @@ from pydantic import ValidationError
 
 from app.config import settings
 from app.providers.llm.base import LLMProvider
-from app.schemas import CreateProjectRequest, Storyboard
+from app.schemas import CreateProjectRequest, Scene, Storyboard
 
 
 OUTLINE_SYSTEM_PROMPT = """You are a planning engine for an AI video production studio.
@@ -43,8 +43,24 @@ Preserve the supplied scene ids. Keep text concise. If no dialogue is needed, wr
 """
 
 
+SINGLE_SCENE_SYSTEM_PROMPT = """You rewrite ONE existing video scene.
+Do NOT return JSON. Do NOT use markdown. Do NOT expose chain-of-thought.
+
+Return exactly one block using the supplied scene id:
+[scene-001]
+NARRATION: concise narration in the requested language
+DIALOGUE: optional dialogue, or NONE
+ACTION: concise visible action
+VISUAL: one compact English visual-generation prompt
+SEARCH: short English stock-media search query
+[/scene-001]
+
+Keep the scene consistent with the project title, logline, visual style and neighboring context.
+Do not change the scene id or duration.
+"""
+
+
 def _scene_durations(total_seconds: int, scene_count: int) -> list[float]:
-    """Distribute duration deterministically so the total is exact."""
     scene_count = max(1, scene_count)
     base = total_seconds // scene_count
     remainder = total_seconds % scene_count
@@ -95,14 +111,9 @@ def _parse_outline_text(content: str, target_scene_count: int, target_duration: 
             f"parsed {len(scene_ideas)} SCENE lines"
         )
 
-    # If the model produced a few extra ideas, keep only the requested amount.
     scene_ideas = scene_ideas[:target_scene_count]
-
-    # If it is only slightly short, duplicate/continue the last narrative beat instead
-    # of throwing away an otherwise usable outline. Detailed generation will make each
-    # scene distinct later.
     while len(scene_ideas) < target_scene_count:
-        previous_title, previous_beat = scene_ideas[-1]
+        _, previous_beat = scene_ideas[-1]
         scene_ideas.append((f"Continuation {len(scene_ideas) + 1}", previous_beat))
 
     durations = _scene_durations(target_duration, target_scene_count)
@@ -160,8 +171,8 @@ def _parse_detail_blocks(content: str, batch: list[dict]) -> list[dict]:
                 "duration_seconds": source["duration_seconds"],
                 "narration": fields.get("NARRATION", ""),
                 "dialogue": dialogue,
-                "action": fields.get("ACTION") or source["beat"],
-                "visual_prompt": fields.get("VISUAL") or source["beat"],
+                "action": fields.get("ACTION") or source.get("beat") or "Continue the story.",
+                "visual_prompt": fields.get("VISUAL") or source.get("beat") or "cinematic animation",
                 "media_search_query": fields.get("SEARCH", ""),
             }
         )
@@ -235,8 +246,6 @@ class LlamaCppProvider(LLMProvider):
                 target_duration=request.duration_seconds,
             )
         except ValueError:
-            # One short retry is enough because the output format is now line-based,
-            # not a fragile nested JSON document.
             retry_prompt = (
                 prompt
                 + "\nIMPORTANT: your previous answer did not contain enough SCENE: lines. "
@@ -286,9 +295,43 @@ class LlamaCppProvider(LLMProvider):
             temperature=settings.llm_temperature,
         )
 
-        # Parsing is intentionally tolerant. If the model omits a block or a field,
-        # _parse_detail_blocks falls back to the outline beat instead of failing the job.
         return _parse_detail_blocks(content, batch)
+
+    async def regenerate_scene(
+        self,
+        request: CreateProjectRequest,
+        storyboard: Storyboard,
+        scene: Scene,
+    ) -> Scene:
+        source = {
+            "id": scene.id,
+            "title": scene.title,
+            "duration_seconds": scene.duration_seconds,
+            "beat": scene.action,
+        }
+        prompt = (
+            f"Project title: {storyboard.title}\n"
+            f"Logline: {storyboard.logline}\n"
+            f"Visual style: {storyboard.visual_style}\n"
+            f"Characters: {'; '.join(storyboard.characters)}\n"
+            f"Narration/dialogue language: {request.language}\n"
+            f"Scene duration: {scene.duration_seconds:.0f}s\n"
+            f"Existing title: {scene.title}\n"
+            f"Existing action: {scene.action}\n"
+            f"Existing narration: {scene.narration}\n\n"
+            f"Rewrite only {scene.id}. Keep the same story purpose but improve the scene."
+        )
+
+        content = await self._chat(
+            messages=[
+                {"role": "system", "content": SINGLE_SCENE_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=500,
+            temperature=settings.llm_temperature,
+        )
+        parsed = _parse_detail_blocks(content, [source])[0]
+        return Scene.model_validate(parsed)
 
     async def create_storyboard(self, request: CreateProjectRequest) -> Storyboard:
         outline = await self._create_outline(request)
@@ -312,7 +355,6 @@ class LlamaCppProvider(LLMProvider):
         except ValidationError as exc:
             raise ValueError(f"Assembled storyboard schema invalid: {exc}") from exc
 
-        # Durations are generated by Python, not the LLM, so this should be exact.
         actual = _duration_seconds(storyboard)
         if abs(actual - request.duration_seconds) > 0.01:
             raise ValueError(
