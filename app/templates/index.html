@@ -111,12 +111,23 @@ async function loadProject(projectId){
   status.textContent=`Загружаю проект ${projectId}...`;
   try{
     const response=await fetch(`/api/projects/${encodeURIComponent(projectId)}`);
-    const data=await response.json();
+    let data=await response.json();
     if(!response.ok)throw new Error(data.detail||"Project load failed");
+
+    let recovered=0;
+    const recoverResponse=await fetch(`/api/projects/${encodeURIComponent(projectId)}/media/recover`,{method:"POST"});
+    if(recoverResponse.ok){
+      const recovery=await recoverResponse.json();
+      recovered=Number(recovery.recovered||0);
+      if(recovery.project)data=recovery.project;
+    }
+
     renderProject(data);
     setProjectInUrl(data.id);
     highlightActiveProject(data.id);
-    status.textContent=`Проект загружен: ${data.storyboard.title} · ${data.id}`;
+    status.textContent=recovered
+      ? `Проект загружен: ${data.storyboard.title} · восстановлено локальных AI-кадров: ${recovered}`
+      : `Проект загружен: ${data.storyboard.title} · ${data.id}`;
   }catch(error){status.innerHTML=`<span class="error">Ошибка загрузки проекта: ${escapeHtml(error.message)}</span>`;}
 }
 
