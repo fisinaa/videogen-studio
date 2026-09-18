@@ -46,6 +46,9 @@
       display: inline-block; padding: 3px 8px; border-radius: 999px;
       background: #25203f; color: #bdafff; font-size: 12px;
     }
+    .summary {
+      display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0 4px;
+    }
     .error { color: #ff8d8d; }
     @media (max-width: 850px) {
       .grid { grid-template-columns: 1fr; }
@@ -159,11 +162,20 @@ form.addEventListener("submit", async (event) => {
 
     status.textContent = "Готово. Project ID: " + data.id;
     const sb = data.storyboard;
+    const totalDuration = sb.scenes.reduce(
+      (sum, scene) => sum + Number(scene.duration_seconds || 0),
+      0
+    );
 
     result.innerHTML =
       "<h3>" + escapeHtml(sb.title) + "</h3>" +
       "<p>" + escapeHtml(sb.logline) + "</p>" +
       "<div class='muted'>" + escapeHtml(sb.visual_style) + "</div>" +
+      "<div class='summary'>" +
+        "<span class='badge'>Сцен: " + escapeHtml(sb.scenes.length) + "</span>" +
+        "<span class='badge'>Storyboard: " + escapeHtml(totalDuration.toFixed(1)) + "s</span>" +
+        "<span class='badge'>Запрошено: " + escapeHtml(body.duration_seconds) + "s</span>" +
+      "</div>" +
       sb.scenes.map(scene =>
         "<div class='scene'>" +
         "<span class='badge'>" + escapeHtml(scene.id) + " · " +
