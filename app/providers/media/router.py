@@ -1,19 +1,19 @@
 import asyncio
 
+from app.providers.media.openai_image import OpenAIImageProvider
 from app.providers.media.pexels import PexelsProvider
 from app.providers.media.pixabay import PixabayProvider
-from app.providers.media.qwen_image import QwenImageProvider
 from app.schemas import MediaAsset
 
 
 class MediaRouter:
     def __init__(self) -> None:
         self.search_providers = [PexelsProvider(), PixabayProvider()]
-        self.qwen_image = QwenImageProvider()
+        self.openai_image = OpenAIImageProvider()
 
     def status(self) -> dict[str, bool]:
         result = {provider.name: provider.enabled for provider in self.search_providers}
-        result[self.qwen_image.name] = self.qwen_image.enabled
+        result[self.openai_image.name] = self.openai_image.enabled
         return result
 
     def search_enabled(self) -> bool:
