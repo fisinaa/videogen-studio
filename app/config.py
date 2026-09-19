@@ -36,9 +36,25 @@ class Settings(BaseSettings):
     sd_cpp_t5xxl: Path = Path("")
     sd_cpp_steps: int = 4
     sd_cpp_cfg_scale: float = 1.0
+    sd_cpp_sampling_method: str = "euler"
     sd_cpp_timeout_seconds: int = 600
-    sd_cpp_clip_on_cpu: bool = True
+    sd_cpp_backend: str = "all=cuda0,te=cpu"
+    sd_cpp_max_vram: str = "-1"
+    sd_cpp_threads: int = 14
+    sd_cpp_diffusion_fa: bool = True
     sd_cpp_offload_to_cpu: bool = True
+    sd_cpp_verbose: bool = True
+
+    # Legacy compatibility. Ignored when SD_CPP_BACKEND is set.
+    sd_cpp_clip_on_cpu: bool = True
+
+    # Conservative local render sizes for a 6 GB GPU.
+    sd_cpp_width_16_9: int = 768
+    sd_cpp_height_16_9: int = 432
+    sd_cpp_width_9_16: int = 432
+    sd_cpp_height_9_16: int = 768
+    sd_cpp_width_1_1: int = 512
+    sd_cpp_height_1_1: int = 512
 
     # TTS routing: auto | piper | openai
     tts_provider: str = "auto"
