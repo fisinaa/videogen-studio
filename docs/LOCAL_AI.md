@@ -1,6 +1,6 @@
 # Local AI providers
 
-VideoGen can now route TTS and image generation between local providers and OpenAI.
+VideoGen routes TTS and image generation between local providers and OpenAI.
 
 ## Modes
 
@@ -13,12 +13,10 @@ IMAGE_PROVIDER=auto     # auto | local | openai
 
 ## Piper local TTS (CPU)
 
-VideoGen expects a Piper binary plus a voice `.onnx` file and its matching `.onnx.json` file.
-
-Example layout:
+Current tested layout:
 
 ```text
-/opt/piper/piper
+/opt/piper/venv/bin/piper
 /opt/piper/models/ru_RU-irina-medium.onnx
 /opt/piper/models/ru_RU-irina-medium.onnx.json
 ```
@@ -27,18 +25,18 @@ Example layout:
 
 ```env
 TTS_PROVIDER=auto
-PIPER_BIN=/opt/piper/piper
+PIPER_BIN=/opt/piper/venv/bin/piper
 PIPER_MODEL=/opt/piper/models/ru_RU-irina-medium.onnx
 PIPER_TIMEOUT_SECONDS=120
 ```
 
-Piper receives UTF-8 text on stdin and writes WAV files to the project `audio/` directory. It is intended to run on CPU and does not need to consume the GTX 1660 VRAM.
+Piper receives UTF-8 text on stdin and writes WAV files to the project `audio/` directory. It runs on CPU and leaves the GTX 1660 free for LLM/image work.
 
-Test outside VideoGen:
+Standalone test:
 
 ```bash
 echo 'Привет. Это тест локальной озвучки.' | \
-  /opt/piper/piper \
+  /opt/piper/venv/bin/piper \
   --model /opt/piper/models/ru_RU-irina-medium.onnx \
   --output_file /tmp/piper-test.wav
 
@@ -47,41 +45,76 @@ ffprobe /tmp/piper-test.wav
 
 ## Local image generation with stable-diffusion.cpp
 
-VideoGen supports `sd-cli` with a FLUX-style split model layout:
+Current tested hardware/profile:
+
+```text
+GPU: GTX 1660 6 GB
+Model: FLUX.1-schnell Q2_K
+Text encoders: CPU
+Diffusion: CUDA
+Steps: 4
+Threads: 14
+Flash attention: diffusion only
+CPU offload: enabled
+VRAM reserve: --max-vram -1
+```
+
+`.env`:
 
 ```env
 IMAGE_PROVIDER=auto
-SD_CPP_BIN=/opt/stable-diffusion.cpp/build/bin/sd-cli
-SD_CPP_DIFFUSION_MODEL=/opt/stable-diffusion.cpp/models/flux1-schnell-q3_k.gguf
-SD_CPP_VAE=/opt/stable-diffusion.cpp/models/ae.safetensors
-SD_CPP_CLIP_L=/opt/stable-diffusion.cpp/models/clip_l.safetensors
-SD_CPP_T5XXL=/opt/stable-diffusion.cpp/models/t5xxl.gguf
+
+SD_CPP_BIN=/home/faa/stable-diffusion.cpp/build/bin/sd-cli
+SD_CPP_DIFFUSION_MODEL=/home/faa/models/flux/flux1-schnell-q2_k.gguf
+SD_CPP_VAE=/home/faa/models/flux/ae.safetensors
+SD_CPP_CLIP_L=/home/faa/models/flux/clip_l.safetensors
+SD_CPP_T5XXL=/home/faa/models/flux/t5xxl_fp16.safetensors
+
 SD_CPP_STEPS=4
 SD_CPP_CFG_SCALE=1.0
+SD_CPP_SAMPLING_METHOD=euler
 SD_CPP_TIMEOUT_SECONDS=600
-SD_CPP_CLIP_ON_CPU=true
+SD_CPP_BACKEND=all=cuda0,te=cpu
 SD_CPP_OFFLOAD_TO_CPU=true
+SD_CPP_MAX_VRAM=-1
+SD_CPP_DIFFUSION_FA=true
+SD_CPP_THREADS=14
+SD_CPP_VERBOSE=true
+
+SD_CPP_WIDTH_16_9=768
+SD_CPP_HEIGHT_16_9=432
+SD_CPP_WIDTH_9_16=432
+SD_CPP_HEIGHT_9_16=768
+SD_CPP_WIDTH_1_1=512
+SD_CPP_HEIGHT_1_1=512
 ```
 
-For a 6 GB GTX 1660, start with a low-memory FLUX quantization and keep text encoders/offload on CPU. Do not try to keep the local LLM and image model fully resident in VRAM at the same time.
-
-Basic standalone test:
+The equivalent standalone command is:
 
 ```bash
-/opt/stable-diffusion.cpp/build/bin/sd-cli \
-  --diffusion-model "$SD_CPP_DIFFUSION_MODEL" \
-  --vae "$SD_CPP_VAE" \
-  --clip_l "$SD_CPP_CLIP_L" \
-  --t5xxl "$SD_CPP_T5XXL" \
-  -p 'small brown cartoon mouse near a river, cinematic animation frame' \
+cd ~/stable-diffusion.cpp
+
+./build/bin/sd-cli \
+  --diffusion-model ~/models/flux/flux1-schnell-q2_k.gguf \
+  --vae ~/models/flux/ae.safetensors \
+  --clip_l ~/models/flux/clip_l.safetensors \
+  --t5xxl ~/models/flux/t5xxl_fp16.safetensors \
+  -p "cute small gray mouse standing near a river, children's animated movie, cinematic forest background, soft morning light" \
+  -W 512 \
+  -H 512 \
+  --steps 4 \
   --cfg-scale 1.0 \
   --sampling-method euler \
-  --steps 4 \
-  -W 1024 -H 576 \
-  --clip-on-cpu \
+  --backend all=cuda0,te=cpu \
   --offload-to-cpu \
-  -o /tmp/local-image.png
+  --max-vram -1 \
+  --diffusion-fa \
+  -t 14 \
+  -o ~/flux-test.png \
+  -v
 ```
+
+VideoGen builds the same profile dynamically, replacing prompt, output path and dimensions for the current scene/project.
 
 ## Provider behavior
 
@@ -101,7 +134,7 @@ Piper local -> OpenAI TTS
 stable-diffusion.cpp local -> OpenAI Image
 ```
 
-If a Character Reference exists, VideoGen passes it to the chosen image provider. OpenAI uses the image-edit endpoint; the local provider uses img2img (`-i`) with a conservative strength.
+If a Character Reference exists, VideoGen currently passes it to the local provider as conservative img2img input. If the local provider fails in `auto` mode, OpenAI remains the fallback. A dedicated local identity/reference workflow (IP-Adapter/PuLID/Flux reference model) is planned separately.
 
 ## Recommended runtime layout
 
@@ -109,10 +142,10 @@ If a Character Reference exists, VideoGen passes it to the chosen image provider
 CPU:
   Piper TTS
   FFmpeg
-  FLUX text encoders where possible
+  FLUX text encoders
 
 GPU:
   llama.cpp OR stable-diffusion.cpp
 ```
 
-On a 6 GB GPU, schedule llama.cpp and local image generation rather than expecting both large models to stay resident simultaneously. A dedicated GPU resource manager is the next layer to automate stop/start of llama-server around local image jobs.
+On a 6 GB GPU, schedule llama.cpp and local image generation rather than expecting both models to remain fully resident in VRAM. A GPU resource manager is the next layer to automate stop/start of llama-server around local image jobs.
