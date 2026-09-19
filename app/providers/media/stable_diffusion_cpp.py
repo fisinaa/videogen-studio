@@ -24,10 +24,13 @@ class StableDiffusionCppProvider:
 
     def _dimensions(self, aspect_ratio: str) -> tuple[int, int]:
         return {
-            "16:9": (1024, 576),
-            "9:16": (576, 1024),
-            "1:1": (768, 768),
-        }.get(aspect_ratio, (1024, 576))
+            "16:9": (settings.sd_cpp_width_16_9, settings.sd_cpp_height_16_9),
+            "9:16": (settings.sd_cpp_width_9_16, settings.sd_cpp_height_9_16),
+            "1:1": (settings.sd_cpp_width_1_1, settings.sd_cpp_height_1_1),
+        }.get(
+            aspect_ratio,
+            (settings.sd_cpp_width_16_9, settings.sd_cpp_height_16_9),
+        )
 
     async def generate(
         self,
@@ -62,25 +65,46 @@ class StableDiffusionCppProvider:
             str(settings.sd_cpp_t5xxl),
             "-p",
             prompt,
-            "--cfg-scale",
-            str(settings.sd_cpp_cfg_scale),
-            "--sampling-method",
-            "euler",
-            "--steps",
-            str(settings.sd_cpp_steps),
             "-W",
             str(width),
             "-H",
             str(height),
-            "-o",
-            str(output_path),
+            "--steps",
+            str(settings.sd_cpp_steps),
+            "--cfg-scale",
+            str(settings.sd_cpp_cfg_scale),
+            "--sampling-method",
+            settings.sd_cpp_sampling_method,
         ]
-        if settings.sd_cpp_clip_on_cpu:
+
+        backend = settings.sd_cpp_backend.strip()
+        if backend:
+            cmd.extend(["--backend", backend])
+        elif settings.sd_cpp_clip_on_cpu:
+            # Compatibility with older configs. Newer sd-cli prefers --backend te=cpu.
             cmd.append("--clip-on-cpu")
+
         if settings.sd_cpp_offload_to_cpu:
             cmd.append("--offload-to-cpu")
+
+        max_vram = settings.sd_cpp_max_vram.strip()
+        if max_vram:
+            cmd.extend(["--max-vram", max_vram])
+
+        if settings.sd_cpp_diffusion_fa:
+            cmd.append("--diffusion-fa")
+
+        if settings.sd_cpp_threads > 0:
+            cmd.extend(["-t", str(settings.sd_cpp_threads)])
+
+        # This is conservative img2img support for a project Character Reference.
+        # If the local model cannot handle it, IMAGE_PROVIDER=auto will fall back to OpenAI.
         if reference_path is not None and reference_path.is_file():
             cmd.extend(["-i", str(reference_path), "--strength", "0.45"])
+
+        cmd.extend(["-o", str(output_path)])
+        if settings.sd_cpp_verbose:
+            cmd.append("-v")
 
         process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -98,7 +122,7 @@ class StableDiffusionCppProvider:
             raise RuntimeError("Local image generation timed out") from exc
 
         if process.returncode != 0:
-            detail = (stderr or stdout).decode("utf-8", errors="replace")[-3000:]
+            detail = (stderr or stdout).decode("utf-8", errors="replace")[-5000:]
             raise RuntimeError(
                 f"stable-diffusion.cpp exited with code {process.returncode}: {detail}"
             )
@@ -106,6 +130,7 @@ class StableDiffusionCppProvider:
             raise RuntimeError("stable-diffusion.cpp did not create an image")
 
         local_url = f"/api/projects/{project_id}/media/{filename}"
+        mode = "img2img reference" if reference_path is not None else "text-to-image"
         return MediaAsset(
             provider=self.name,
             asset_id=filename,
@@ -117,7 +142,10 @@ class StableDiffusionCppProvider:
             height=height,
             duration_seconds=None,
             author="local",
-            label=f"stable-diffusion.cpp · {scene_id}",
+            label=(
+                f"stable-diffusion.cpp · {settings.sd_cpp_diffusion_model.name} · "
+                f"{width}x{height} · {mode} · {scene_id}"
+            ),
             local_path=f"media/{filename}",
         )
 
