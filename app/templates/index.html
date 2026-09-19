@@ -58,8 +58,8 @@
 <main>
   <h1>VideoGen Studio</h1>
   <div class="muted">LLM backend: {{ llm_url }}</div>
-  <div class="muted">Media: Pexels={{ 'ON' if media_status.pexels else 'OFF' }}, Pixabay={{ 'ON' if media_status.pixabay else 'OFF' }}, OpenAI Image={{ 'ON' if media_status.openai_image else 'OFF' }}</div>
-  <div class="muted">TTS: OpenAI={{ 'ON' if tts_enabled else 'OFF' }}, voice={{ tts_voice }}</div>
+  <div class="muted">Media: Pexels={{ 'ON' if media_status.pexels else 'OFF' }}, Pixabay={{ 'ON' if media_status.pixabay else 'OFF' }}, Local Image={{ 'ON' if media_status.local_image else 'OFF' }}, OpenAI Image={{ 'ON' if media_status.openai_image else 'OFF' }}, selected={{ media_status.image_selected }}</div>
+  <div class="muted">TTS: Piper={{ 'ON' if tts_status.piper else 'OFF' }}, OpenAI={{ 'ON' if tts_status.openai else 'OFF' }}, selected={{ tts_status.selected }}</div>
 
   <div class="grid">
     <section class="card">
@@ -112,6 +112,7 @@ function projectDuration(project){return project.storyboard.scenes.reduce((sum,s
 function setProjectInUrl(projectId){const url=new URL(window.location.href);if(projectId)url.searchParams.set("project",projectId);else url.searchParams.delete("project");window.history.replaceState({},"",url);}
 function highlightActiveProject(projectId){document.querySelectorAll(".recent-project").forEach(item=>item.classList.toggle("active",item.dataset.projectId===projectId));}
 function sceneById(project,sceneId){return project?.storyboard?.scenes?.find(scene=>scene.id===sceneId)||null;}
+function isGeneratedAiMedia(scene){return ["openai_image","local_image"].includes(scene?.selected_media?.provider);}
 
 async function loadProject(projectId){
   if(!projectId)return;
@@ -135,7 +136,7 @@ function characterReferenceHtml(project){
   const media=project.character_reference;
   if(!media)return `<div class="character-reference"><b>Character Reference:</b> <span class="muted">ещё не создан. Пока сцены генерируются только по текстовому описанию.</span></div>`;
   const preview=media.preview_url?`<img src="${escapeHtml(previewUrl(media))}" alt="character reference">`:"";
-  return `<div class="character-reference"><b>Character Reference активен</b><div class="muted">Все новые AI-кадры будут использовать этот эталон персонажа через image edit.</div>${preview}<div class="muted">${escapeHtml(media.asset_id)}</div></div>`;
+  return `<div class="character-reference"><b>Character Reference активен</b><div class="muted">Все новые AI-кадры будут использовать этот эталон через выбранный image provider.</div>${preview}<div class="muted">${escapeHtml(media.provider)} · ${escapeHtml(media.asset_id)}</div></div>`;
 }
 
 function selectedMediaHtml(scene){
@@ -173,7 +174,7 @@ function sceneEditor(scene){
 function renderProject(project){
   currentProject=project;
   const sb=project.storyboard,totalDuration=projectDuration(project);
-  const missingAi=sb.scenes.filter(scene=>scene.selected_media?.provider!=="openai_image").length;
+  const missingAi=sb.scenes.filter(scene=>!isGeneratedAiMedia(scene)).length;
   const missingAudio=sb.scenes.filter(scene=>!scene.selected_audio).length;
   result.innerHTML=`<h3>${escapeHtml(sb.title)}</h3><p>${escapeHtml(sb.logline)}</p><div class="muted">${escapeHtml(sb.visual_style)}</div>`+
     `<div class="summary"><span class="badge">Сцен: ${escapeHtml(sb.scenes.length)}</span><span class="badge">Storyboard: ${escapeHtml(totalDuration.toFixed(1))}s</span><span class="badge">Project ID: ${escapeHtml(project.id)}</span><span class="badge">Без AI-кадра: ${missingAi}</span><span class="badge">Без озвучки: ${missingAudio}</span><span class="badge">Reference: ${project.character_reference?'ON':'OFF'}</span></div>`+
@@ -196,30 +197,30 @@ async function searchMedia(editor){const sceneId=editor.dataset.sceneId,message=
 async function selectMedia(editor,asset){const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message");message.textContent="Сохраняю выбранный ассет...";try{const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/media/select`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(asset)});const data=await response.json();if(!response.ok)throw new Error(data.detail||"Media select failed");updateSceneMediaInDom(sceneId,data);setProjectInUrl(data.id);message.innerHTML=`<span class="success">Медиа выбрано и сохранено.</span>`;}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}}
 
 async function requestAiImage(sceneId){const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/media/generate-ai`,{method:"POST"});const data=await response.json();if(!response.ok)throw new Error(data.detail||"AI image generation failed");return data;}
-async function generateAiImage(editor){const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"),button=editor.querySelector(".generate-ai");button.disabled=true;message.textContent=currentProject.character_reference?"OpenAI генерирует сцену с character reference...":"OpenAI генерирует изображение...";try{await persistScene(editor);const data=await requestAiImage(sceneId);updateSceneMediaInDom(sceneId,data);setProjectInUrl(data.id);message.innerHTML=`<span class="success">AI-изображение готово и сохранено локально.</span>`;status.textContent=`AI-изображение для ${sceneId} готово.`;}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}finally{button.disabled=false;}}
+async function generateAiImage(editor){const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"),button=editor.querySelector(".generate-ai");button.disabled=true;message.textContent=currentProject.character_reference?"Генерируется AI-сцена с Character Reference...":"Генерируется AI-изображение...";try{await persistScene(editor);const data=await requestAiImage(sceneId);updateSceneMediaInDom(sceneId,data);setProjectInUrl(data.id);const provider=sceneById(data,sceneId)?.selected_media?.provider||"image provider";message.innerHTML=`<span class="success">AI-изображение готово: ${escapeHtml(provider)}.</span>`;status.textContent=`AI-изображение для ${sceneId} готово через ${provider}.`;}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}finally{button.disabled=false;}}
 
 async function requestAudio(sceneId){const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/audio/generate`,{method:"POST"});const data=await response.json();if(!response.ok)throw new Error(data.detail||"TTS generation failed");return data;}
-async function generateAudio(editor){const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"),button=editor.querySelector(".generate-audio");button.disabled=true;message.textContent="OpenAI TTS озвучивает сцену...";try{await persistScene(editor);const data=await requestAudio(sceneId);updateSceneAudioInDom(sceneId,data);setProjectInUrl(data.id);message.innerHTML=`<span class="success">Озвучка готова и сохранена локально.</span>`;status.textContent=`Озвучка для ${sceneId} готова.`;}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}finally{button.disabled=false;}}
+async function generateAudio(editor){const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"),button=editor.querySelector(".generate-audio");button.disabled=true;message.textContent="TTS озвучивает сцену...";try{await persistScene(editor);const data=await requestAudio(sceneId);updateSceneAudioInDom(sceneId,data);setProjectInUrl(data.id);const provider=sceneById(data,sceneId)?.selected_audio?.provider||"TTS";message.innerHTML=`<span class="success">Озвучка готова: ${escapeHtml(provider)}.</span>`;status.textContent=`Озвучка для ${sceneId} готова через ${provider}.`;}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}finally{button.disabled=false;}}
 
 async function generateCharacterReference(){
   if(!currentProject)return;
   if(currentProject.character_reference&&!window.confirm("Перегенерировать эталон персонажа? Старые сцены не изменятся автоматически; новый reference будет использоваться только для следующих генераций."))return;
-  const button=document.getElementById("generate-character-reference");if(button)button.disabled=true;status.textContent="OpenAI создаёт эталон персонажа...";
-  try{const response=await fetch(`/api/projects/${currentProject.id}/character-reference/generate`,{method:"POST"});const data=await response.json();if(!response.ok)throw new Error(data.detail||"Character reference generation failed");renderProject(data);setProjectInUrl(data.id);status.textContent="Character Reference создан. Все следующие AI-сцены будут использовать его автоматически.";}
+  const button=document.getElementById("generate-character-reference");if(button)button.disabled=true;status.textContent="Создаётся эталон персонажа через выбранный image provider...";
+  try{const response=await fetch(`/api/projects/${currentProject.id}/character-reference/generate`,{method:"POST"});const data=await response.json();if(!response.ok)throw new Error(data.detail||"Character reference generation failed");renderProject(data);setProjectInUrl(data.id);status.textContent=`Character Reference создан через ${data.character_reference?.provider||"image provider"}.`;}
   catch(error){status.innerHTML=`<span class="error">Ошибка Character Reference: ${escapeHtml(error.message)}</span>`;if(button)button.disabled=false;}
 }
 
 async function generateAllAiImages(){
   if(!currentProject||bulkGenerationRunning||bulkAudioRunning)return;
-  const targets=currentProject.storyboard.scenes.filter(scene=>scene.selected_media?.provider!=="openai_image");
-  if(!targets.length){status.textContent="Во всех сценах уже есть OpenAI AI-изображения.";return;}
+  const targets=currentProject.storyboard.scenes.filter(scene=>!isGeneratedAiMedia(scene));
+  if(!targets.length){status.textContent="Во всех сценах уже есть AI-изображения.";return;}
   const referenceNote=currentProject.character_reference?" Character Reference будет применён ко всем новым сценам.":" Character Reference не создан: персонаж может отличаться между сценами.";
-  if(!window.confirm(`Сгенерировать ${targets.length} изображений через OpenAI API? Каждый кадр тарифицируется отдельно. Генерация пойдёт строго по одной сцене.${referenceNote}`))return;
+  if(!window.confirm(`Сгенерировать ${targets.length} AI-изображений? В режиме auto сначала используется local provider; при fallback на OpenAI возможна тарификация. Генерация пойдёт строго по одной сцене.${referenceNote}`))return;
   bulkGenerationRunning=true;const button=document.getElementById("generate-all-ai");const progress=document.getElementById("bulk-progress");if(button)button.disabled=true;progress.style.display="block";
   let success=0;const failures=[];
   for(let i=0;i<targets.length;i++){
     const sceneId=targets[i].id;progress.textContent=`Генерация изображений ${i+1}/${targets.length}: ${sceneId}... Успешно: ${success}, ошибок: ${failures.length}`;status.textContent=`AI batch: ${i+1}/${targets.length} · ${sceneId}`;const editor=document.querySelector(`.scene-editor[data-scene-id="${CSS.escape(sceneId)}"]`);
-    try{if(editor)await persistScene(editor);const data=await requestAiImage(sceneId);updateSceneMediaInDom(sceneId,data);success++;const message=editor?.querySelector(".scene-message");if(message)message.innerHTML=`<span class="success">AI-кадр готов (${i+1}/${targets.length}).</span>`;}
+    try{if(editor)await persistScene(editor);const data=await requestAiImage(sceneId);updateSceneMediaInDom(sceneId,data);success++;const provider=sceneById(data,sceneId)?.selected_media?.provider||"image provider";const message=editor?.querySelector(".scene-message");if(message)message.innerHTML=`<span class="success">AI-кадр готов (${i+1}/${targets.length}) · ${escapeHtml(provider)}.</span>`;}
     catch(error){failures.push(`${sceneId}: ${error.message}`);const message=editor?.querySelector(".scene-message");if(message)message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}
   }
   bulkGenerationRunning=false;if(button)button.disabled=false;progress.innerHTML=failures.length?`<span class="error">Готово: ${success}/${targets.length}. Ошибок: ${failures.length}. Повторный запуск обработает только недостающие сцены.</span>`:`<span class="success">Готово: ${success}/${targets.length}. Все отсутствующие AI-кадры сгенерированы.</span>`;status.textContent=`AI batch завершён: ${success} успешно, ${failures.length} ошибок.`;
@@ -229,12 +230,12 @@ async function generateAllAudio(){
   if(!currentProject||bulkAudioRunning||bulkGenerationRunning)return;
   const targets=currentProject.storyboard.scenes.filter(scene=>!scene.selected_audio&&(String(scene.narration||"").trim()||(scene.dialogue||[]).length));
   if(!targets.length){status.textContent="Для всех сцен с текстом уже есть озвучка.";return;}
-  if(!window.confirm(`Озвучить ${targets.length} сцен через OpenAI TTS? Запросы пойдут строго по одной сцене.`))return;
+  if(!window.confirm(`Озвучить ${targets.length} сцен? В режиме auto сначала используется Piper; при fallback на OpenAI возможна тарификация. Запросы пойдут строго по одной сцене.`))return;
   bulkAudioRunning=true;const button=document.getElementById("generate-all-audio");const progress=document.getElementById("bulk-progress");if(button)button.disabled=true;progress.style.display="block";
   let success=0;const failures=[];
   for(let i=0;i<targets.length;i++){
     const sceneId=targets[i].id;progress.textContent=`Озвучка ${i+1}/${targets.length}: ${sceneId}... Успешно: ${success}, ошибок: ${failures.length}`;status.textContent=`TTS batch: ${i+1}/${targets.length} · ${sceneId}`;const editor=document.querySelector(`.scene-editor[data-scene-id="${CSS.escape(sceneId)}"]`);
-    try{if(editor)await persistScene(editor);const data=await requestAudio(sceneId);updateSceneAudioInDom(sceneId,data);success++;const message=editor?.querySelector(".scene-message");if(message)message.innerHTML=`<span class="success">Озвучка готова (${i+1}/${targets.length}).</span>`;}
+    try{if(editor)await persistScene(editor);const data=await requestAudio(sceneId);updateSceneAudioInDom(sceneId,data);success++;const provider=sceneById(data,sceneId)?.selected_audio?.provider||"TTS";const message=editor?.querySelector(".scene-message");if(message)message.innerHTML=`<span class="success">Озвучка готова (${i+1}/${targets.length}) · ${escapeHtml(provider)}.</span>`;}
     catch(error){failures.push(`${sceneId}: ${error.message}`);const message=editor?.querySelector(".scene-message");if(message)message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}
   }
   bulkAudioRunning=false;if(button)button.disabled=false;progress.innerHTML=failures.length?`<span class="error">Озвучено: ${success}/${targets.length}. Ошибок: ${failures.length}. Повторный запуск обработает только недостающие сцены.</span>`:`<span class="success">Озвучено: ${success}/${targets.length}. Все сцены с текстом готовы.</span>`;status.textContent=`TTS batch завершён: ${success} успешно, ${failures.length} ошибок.`;
