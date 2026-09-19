@@ -27,14 +27,7 @@ Current target hardware profile:
 Example llama.cpp server:
 
 ```bash
-~/llama.cpp/build/bin/llama-server \
-  -m ~/models/Qwen3-8B-abliterated.Q4_K_M.gguf \
-  -ngl 38 \
-  -c 4096 \
-  -ctk q8_0 \
-  -ctv q8_0 \
-  --host 127.0.0.1 \
-  --port 8081
+~/llama.cpp/build/bin/llama-server -m ~/models/Qwen3-8B-abliterated.Q4_K_M.gguf -ngl 38 -c 4096 -ctk q8_0 -ctv q8_0 -t 12 -tb 12 -np 1 --host 127.0.0.1 --port 8081
 ```
 
 Check it:
