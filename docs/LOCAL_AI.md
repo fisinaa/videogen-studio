@@ -9,7 +9,7 @@ TTS_PROVIDER=auto       # auto | piper | openai
 IMAGE_PROVIDER=auto     # auto | local | openai
 ```
 
-`auto` prefers the local provider when it is fully configured and falls back to OpenAI if the local provider is unavailable or fails.
+`auto` remains the default backend route for API calls that do not choose a provider explicitly. The web UI now exposes explicit **Local Draft** and **OpenAI Final** actions per scene.
 
 ## Piper local TTS (CPU)
 
@@ -32,17 +32,6 @@ PIPER_TIMEOUT_SECONDS=120
 
 Piper receives UTF-8 text on stdin and writes WAV files to the project `audio/` directory. It runs on CPU and leaves the GTX 1660 free for LLM/image work.
 
-Standalone test:
-
-```bash
-echo 'Привет. Это тест локальной озвучки.' | \
-  /opt/piper/venv/bin/piper \
-  --model /opt/piper/models/ru_RU-irina-medium.onnx \
-  --output_file /tmp/piper-test.wav
-
-ffprobe /tmp/piper-test.wav
-```
-
 ## Local image generation with stable-diffusion.cpp
 
 Current tested hardware/profile:
@@ -63,13 +52,11 @@ VRAM reserve: --max-vram -1
 
 ```env
 IMAGE_PROVIDER=auto
-
 SD_CPP_BIN=/home/faa/stable-diffusion.cpp/build/bin/sd-cli
 SD_CPP_DIFFUSION_MODEL=/home/faa/models/flux/flux1-schnell-q2_k.gguf
 SD_CPP_VAE=/home/faa/models/flux/ae.safetensors
 SD_CPP_CLIP_L=/home/faa/models/flux/clip_l.safetensors
 SD_CPP_T5XXL=/home/faa/models/flux/t5xxl_fp16.safetensors
-
 SD_CPP_STEPS=4
 SD_CPP_CFG_SCALE=1.0
 SD_CPP_SAMPLING_METHOD=euler
@@ -80,7 +67,6 @@ SD_CPP_MAX_VRAM=-1
 SD_CPP_DIFFUSION_FA=true
 SD_CPP_THREADS=14
 SD_CPP_VERBOSE=true
-
 SD_CPP_WIDTH_16_9=768
 SD_CPP_HEIGHT_16_9=432
 SD_CPP_WIDTH_9_16=432
@@ -89,7 +75,7 @@ SD_CPP_WIDTH_1_1=512
 SD_CPP_HEIGHT_1_1=512
 ```
 
-The equivalent standalone command is:
+Equivalent standalone profile:
 
 ```bash
 cd ~/stable-diffusion.cpp
@@ -100,8 +86,7 @@ cd ~/stable-diffusion.cpp
   --clip_l ~/models/flux/clip_l.safetensors \
   --t5xxl ~/models/flux/t5xxl_fp16.safetensors \
   -p "cute small gray mouse standing near a river, children's animated movie, cinematic forest background, soft morning light" \
-  -W 512 \
-  -H 512 \
+  -W 512 -H 512 \
   --steps 4 \
   --cfg-scale 1.0 \
   --sampling-method euler \
@@ -114,27 +99,43 @@ cd ~/stable-diffusion.cpp
   -v
 ```
 
-VideoGen builds the same profile dynamically, replacing prompt, output path and dimensions for the current scene/project.
+## Image workflow
+
+The tested FLUX Q2_K img2img path follows a Character Reference too strongly and can preserve the neutral reference pose/background instead of following the scene prompt. Therefore the default workflow is deliberately split:
+
+```text
+Local Draft
+  provider = local
+  Character Reference = OFF by default
+  purpose = composition, environment, action, cheap scene drafts
+
+OpenAI Final
+  provider = openai
+  Character Reference = ON by default when it exists
+  purpose = final frames and stronger character consistency
+```
+
+Each scene has a **Use Character Reference** checkbox, so either default can be overridden manually. The backend endpoint also accepts `provider=local|openai|auto` and `use_reference=true|false`.
+
+Mass actions are separated into **All draft local** and **All final OpenAI**. OpenAI final generation may incur API cost.
+
+A better local identity workflow can later replace img2img with IP-Adapter, PuLID, Flux Kontext/reference conditioning, or a character LoRA. Until then, reference-off local drafts avoid the current over-attachment problem.
 
 ## Provider behavior
 
-### TTS
-
-`auto` order:
+TTS auto order:
 
 ```text
 Piper local -> OpenAI TTS
 ```
 
-### Images
-
-`auto` order:
+Legacy image auto order:
 
 ```text
 stable-diffusion.cpp local -> OpenAI Image
 ```
 
-If a Character Reference exists, VideoGen currently passes it to the local provider as conservative img2img input. If the local provider fails in `auto` mode, OpenAI remains the fallback. A dedicated local identity/reference workflow (IP-Adapter/PuLID/Flux reference model) is planned separately.
+The explicit UI buttons bypass that ambiguity and select the requested provider directly.
 
 ## Recommended runtime layout
 
