@@ -53,6 +53,7 @@ class Scene(BaseModel):
     visual_prompt: str
     media_search_query: str = ""
     selected_media: MediaAsset | None = None
+    media_candidates: list[MediaAsset] = Field(default_factory=list)
     selected_audio: AudioAsset | None = None
 
 
