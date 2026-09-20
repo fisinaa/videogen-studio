@@ -14,7 +14,7 @@ from app.schemas import CreateProjectRequest, MediaAsset, Project, SceneUpdate
 from app.storage import project_store
 
 
-app = FastAPI(title="VideoGen Studio", version="0.7.0")
+app = FastAPI(title="VideoGen Studio", version="0.8.0")
 templates = Jinja2Templates(directory="app/templates")
 llm = LlamaCppProvider()
 
@@ -194,6 +194,7 @@ async def generate_character_reference(project_id: str):
         "features. Do not include captions, labels, text, watermark, extra characters or a grid."
     )
 
+    provider = "openai" if media_router.openai_image.enabled else "local"
     try:
         asset = await media_router.generate_image(
             prompt=prompt,
@@ -201,6 +202,7 @@ async def generate_character_reference(project_id: str):
             project_id=project.id,
             scene_id="character-reference",
             media_dir=project_store.media_dir(project.id),
+            provider=provider,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Character reference generation failed: {_error_detail(exc)}") from exc
@@ -284,7 +286,12 @@ async def search_scene_media(
 
 
 @app.post("/api/projects/{project_id}/scenes/{scene_id}/media/generate-ai")
-async def generate_scene_ai_media(project_id: str, scene_id: str):
+async def generate_scene_ai_media(
+    project_id: str,
+    scene_id: str,
+    provider: str = Query(default="auto", pattern="^(auto|local|openai)$"),
+    use_reference: bool | None = Query(default=None),
+):
     project = project_store.load(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -292,8 +299,12 @@ async def generate_scene_ai_media(project_id: str, scene_id: str):
     if scene is None:
         raise HTTPException(status_code=404, detail="Scene not found")
 
+    # Safe defaults: local draft does not use the character reference; OpenAI final does.
+    if use_reference is None:
+        use_reference = provider == "openai"
+
+    reference_path = _character_reference_path(project) if use_reference else None
     characters = "; ".join(project.storyboard.characters)
-    reference_path = _character_reference_path(project)
     prompt_parts = [
         scene.visual_prompt.strip(),
         f"Visual style: {project.storyboard.visual_style.strip()}",
@@ -303,8 +314,12 @@ async def generate_scene_ai_media(project_id: str, scene_id: str):
     if reference_path is not None:
         prompt_parts.append(
             "The attached image is the canonical character reference. Preserve identity, face, body "
-            "proportions, colors, clothing and distinctive features. Change only pose, camera, expression "
-            "and environment as required by this scene."
+            "proportions, colors, clothing and distinctive features, while following the scene composition, "
+            "environment, action, camera and objects described above."
+        )
+    else:
+        prompt_parts.append(
+            "Prioritize the described scene composition, environment, action, camera and objects."
         )
     prompt_parts.append("No captions, no text, no watermark.")
     prompt = "\n".join(part for part in prompt_parts if part)
@@ -317,6 +332,7 @@ async def generate_scene_ai_media(project_id: str, scene_id: str):
             scene_id=scene.id,
             media_dir=project_store.media_dir(project.id),
             reference_path=reference_path,
+            provider=provider,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Image generation failed: {_error_detail(exc)}") from exc
