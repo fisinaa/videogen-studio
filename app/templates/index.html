@@ -5,69 +5,22 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>VideoGen Studio</title>
   <style>
-    :root { color-scheme:dark; font-family:Inter,ui-sans-serif,system-ui,sans-serif; background:#0b0d12; color:#f5f7fb; }
-    * { box-sizing:border-box; }
-    body { margin:0; background:#0b0d12; }
-    main { width:min(1280px,94vw); margin:0 auto; padding:42px 0 80px; }
-    h1 { font-size:42px; margin:0 0 8px; }
-    .muted { color:#969cab; }
-    .grid { display:grid; grid-template-columns:.9fr 1.1fr; gap:24px; margin-top:30px; }
-    .card { border:1px solid #242936; border-radius:18px; padding:22px; background:#12151d; }
-    textarea,select,input { width:100%; margin-top:7px; margin-bottom:14px; padding:11px 13px; background:#0d1016; color:#fff; border:1px solid #303646; border-radius:10px; font:inherit; }
-    textarea { min-height:100px; resize:vertical; }
-    #prompt { min-height:185px; }
-    label { display:block; font-size:14px; color:#c7cbd4; }
-    .row { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
-    button { border:0; border-radius:10px; padding:11px 15px; font-weight:700; cursor:pointer; background:#7c5cff; color:white; font-size:14px; }
-    button.secondary { background:#252b37; }
-    button.warn { background:#6247aa; }
-    button.media { background:#176b87; }
-    button.ai { background:#287a4a; }
-    button.tts { background:#9a5b24; }
-    button:disabled { opacity:.55; cursor:wait; }
-    .scene-editor { background:#0e1118; border:1px solid #252b37; border-radius:14px; padding:16px; margin:14px 0; }
-    .scene-head { display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap; }
-    .scene-actions { display:flex; gap:8px; flex-wrap:wrap; }
-    .badge { display:inline-block; padding:3px 8px; border-radius:999px; background:#25203f; color:#bdafff; font-size:12px; }
-    .summary { display:flex; gap:8px; flex-wrap:wrap; margin:14px 0 8px; align-items:center; }
-    .project-actions { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0 18px; }
-    .progress { margin:10px 0 18px; padding:10px 12px; border-radius:10px; background:#0d1016; border:1px solid #252b37; }
-    .error { color:#ff8d8d; }
-    .success { color:#8ee59a; }
-    .media-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:12px; }
-    .media-card { border:1px solid #2a3140; border-radius:12px; overflow:hidden; background:#0b0d12; }
-    .media-card img { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:#171b24; }
-    .media-info { padding:10px; font-size:12px; }
-    .media-info button { width:100%; margin-top:8px; }
-    .selected-media { margin:12px 0; padding:10px; border:1px solid #31543b; border-radius:12px; background:#0d1710; }
-    .selected-media img { width:320px; max-width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:8px; display:block; margin-top:8px; }
-    .selected-media .preview-error { margin-top:8px; }
-    .selected-audio { margin:12px 0; padding:10px; border:1px solid #624822; border-radius:12px; background:#171109; }
-    .selected-audio audio { width:100%; margin-top:9px; }
-    .character-reference { margin:12px 0 18px; padding:14px; border:1px solid #3a4a62; border-radius:12px; background:#0c131d; }
-    .character-reference img { width:260px; max-width:100%; aspect-ratio:1/1; object-fit:cover; border-radius:10px; display:block; margin-top:10px; }
-    .recent-project { padding:14px; border:1px solid #252b37; border-radius:12px; margin:10px 0; cursor:pointer; transition:.15s ease; background:#0e1118; }
-    .recent-project:hover { border-color:#5f54a8; transform:translateY(-1px); }
-    .recent-project.active { border-color:#7c5cff; background:#171329; box-shadow:0 0 0 1px #7c5cff inset; }
-    .recent-title { margin-top:6px; font-weight:700; }
-    .recent-id { margin-top:4px; font-size:12px; }
-    @media (max-width:900px) { .grid{grid-template-columns:1fr;} .row{grid-template-columns:1fr;} .media-grid{grid-template-columns:1fr;} }
+    :root{color-scheme:dark;font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:#0b0d12;color:#f5f7fb}
+    *{box-sizing:border-box}body{margin:0;background:#0b0d12}main{width:min(1280px,94vw);margin:0 auto;padding:42px 0 80px}h1{font-size:42px;margin:0 0 8px}.muted{color:#969cab}.grid{display:grid;grid-template-columns:.9fr 1.1fr;gap:24px;margin-top:30px}.card{border:1px solid #242936;border-radius:18px;padding:22px;background:#12151d}textarea,select,input{width:100%;margin-top:7px;margin-bottom:14px;padding:11px 13px;background:#0d1016;color:#fff;border:1px solid #303646;border-radius:10px;font:inherit}textarea{min-height:100px;resize:vertical}#prompt{min-height:185px}label{display:block;font-size:14px;color:#c7cbd4}.row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}button{border:0;border-radius:10px;padding:11px 15px;font-weight:700;cursor:pointer;background:#7c5cff;color:#fff;font-size:14px}button.secondary{background:#252b37}button.warn{background:#6247aa}button.media{background:#176b87}button.local{background:#2d7651}button.openai{background:#2e609b}button.tts{background:#9a5b24}button:disabled{opacity:.55;cursor:wait}.scene-editor{background:#0e1118;border:1px solid #252b37;border-radius:14px;padding:16px;margin:14px 0}.scene-head{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}.scene-actions,.project-actions,.summary{display:flex;gap:8px;flex-wrap:wrap}.summary{margin:14px 0 8px;align-items:center}.project-actions{margin:12px 0 18px}.badge{display:inline-block;padding:3px 8px;border-radius:999px;background:#25203f;color:#bdafff;font-size:12px}.progress{margin:10px 0 18px;padding:10px 12px;border-radius:10px;background:#0d1016;border:1px solid #252b37}.error{color:#ff8d8d}.success{color:#8ee59a}.media-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}.media-card{border:1px solid #2a3140;border-radius:12px;overflow:hidden;background:#0b0d12}.media-card img{width:100%;aspect-ratio:16/9;object-fit:cover;display:block}.media-info{padding:10px;font-size:12px}.media-info button{width:100%;margin-top:8px}.selected-media,.selected-audio,.character-reference{margin:12px 0;padding:10px;border-radius:12px}.selected-media{border:1px solid #31543b;background:#0d1710}.selected-audio{border:1px solid #624822;background:#171109}.selected-media img{width:320px;max-width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:8px;display:block;margin-top:8px}.selected-audio audio{width:100%;margin-top:9px}.character-reference{border:1px solid #3a4a62;background:#0c131d;padding:14px}.character-reference img{width:260px;max-width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:10px;display:block;margin-top:10px}.reference-toggle{display:flex;align-items:center;gap:8px;margin:10px 0 14px;color:#c7cbd4}.reference-toggle input{width:auto;margin:0}.recent-project{padding:14px;border:1px solid #252b37;border-radius:12px;margin:10px 0;cursor:pointer;background:#0e1118}.recent-project.active{border-color:#7c5cff;background:#171329}@media(max-width:900px){.grid{grid-template-columns:1fr}.row{grid-template-columns:1fr}.media-grid{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
 <main>
   <h1>VideoGen Studio</h1>
   <div class="muted">LLM backend: {{ llm_url }}</div>
-  <div class="muted">Media: Pexels={{ 'ON' if media_status.pexels else 'OFF' }}, Pixabay={{ 'ON' if media_status.pixabay else 'OFF' }}, Local Image={{ 'ON' if media_status.local_image else 'OFF' }}, OpenAI Image={{ 'ON' if media_status.openai_image else 'OFF' }}, selected={{ media_status.image_selected }}</div>
+  <div class="muted">Media: Pexels={{ 'ON' if media_status.pexels else 'OFF' }}, Pixabay={{ 'ON' if media_status.pixabay else 'OFF' }}, Local Image={{ 'ON' if media_status.local_image else 'OFF' }}, OpenAI Image={{ 'ON' if media_status.openai_image else 'OFF' }}, env={{ media_status.image_selected }}</div>
   <div class="muted">TTS: Piper={{ 'ON' if tts_status.piper else 'OFF' }}, OpenAI={{ 'ON' if tts_status.openai else 'OFF' }}, selected={{ tts_status.selected }}</div>
 
   <div class="grid">
     <section class="card">
       <h2>Новый проект</h2>
       <form id="project-form">
-        <label>Что хотим создать?
-          <textarea id="prompt">Сделай первую серию оригинального приключенческого мультфильма о маленьком мышонке, которого на игрушечном кораблике уносит течением далеко от дома. Атмосфера: природа, опасность, любопытство, без дословного пересказа существующих произведений.</textarea>
-        </label>
+        <label>Что хотим создать?<textarea id="prompt">Сделай первую серию оригинального приключенческого мультфильма о маленьком мышонке, которого на игрушечном кораблике уносит течением далеко от дома. Атмосфера: природа, опасность, любопытство, без дословного пересказа существующих произведений.</textarea></label>
         <div class="row">
           <label>Тип<select id="project_type"><option value="cartoon">Мультфильм</option><option value="series_episode">Серия</option><option value="video">Видео</option><option value="reel">Reel</option></select></label>
           <label>Формат<select id="aspect_ratio"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option></select></label>
@@ -76,180 +29,49 @@
         <button id="submit" type="submit">Создать storyboard</button>
       </form>
     </section>
-
-    <section class="card">
-      <h2>Storyboard editor</h2>
-      <div id="status" class="muted">Жду задачу.</div>
-      <div id="result"></div>
-    </section>
+    <section class="card"><h2>Storyboard editor</h2><div id="status" class="muted">Жду задачу.</div><div id="result"></div></section>
   </div>
 
   <section class="card" style="margin-top:24px">
     <h2>Последние проекты</h2>
-    {% if projects %}
-      {% for project in projects %}
-        <div class="recent-project" data-project-id="{{ project.id }}" tabindex="0" role="button">
-          <span class="badge">{{ project.request.project_type }}</span>
-          <div class="recent-title">{{ project.storyboard.title }}</div>
-          <div class="muted recent-id">{{ project.id }}</div>
-        </div>
-      {% endfor %}
-    {% else %}<div class="muted">Проектов пока нет.</div>{% endif %}
+    {% if projects %}{% for project in projects %}<div class="recent-project" data-project-id="{{ project.id }}" tabindex="0" role="button"><span class="badge">{{ project.request.project_type }}</span><div><b>{{ project.storyboard.title }}</b></div><div class="muted">{{ project.id }}</div></div>{% endfor %}{% else %}<div class="muted">Проектов пока нет.</div>{% endif %}
   </section>
 </main>
-
 <script>
-const form=document.getElementById("project-form");
-const result=document.getElementById("result");
-const status=document.getElementById("status");
-const submit=document.getElementById("submit");
-let currentProject=null;
-let bulkGenerationRunning=false;
-let bulkAudioRunning=false;
-
-function escapeHtml(value){return String(value??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");}
-function projectDuration(project){return project.storyboard.scenes.reduce((sum,scene)=>sum+Number(scene.duration_seconds||0),0);}
-function setProjectInUrl(projectId){const url=new URL(window.location.href);if(projectId)url.searchParams.set("project",projectId);else url.searchParams.delete("project");window.history.replaceState({},"",url);}
-function highlightActiveProject(projectId){document.querySelectorAll(".recent-project").forEach(item=>item.classList.toggle("active",item.dataset.projectId===projectId));}
-function sceneById(project,sceneId){return project?.storyboard?.scenes?.find(scene=>scene.id===sceneId)||null;}
-function isGeneratedAiMedia(scene){return ["openai_image","local_image"].includes(scene?.selected_media?.provider);}
-
-async function loadProject(projectId){
-  if(!projectId)return;
-  status.textContent=`Загружаю проект ${projectId}...`;
-  try{
-    const response=await fetch(`/api/projects/${encodeURIComponent(projectId)}`);
-    let data=await response.json();
-    if(!response.ok)throw new Error(data.detail||"Project load failed");
-    let recovered=0;
-    const recoverResponse=await fetch(`/api/projects/${encodeURIComponent(projectId)}/media/recover`,{method:"POST"});
-    if(recoverResponse.ok){const recovery=await recoverResponse.json();recovered=Number(recovery.recovered||0);if(recovery.project)data=recovery.project;}
-    renderProject(data);setProjectInUrl(data.id);highlightActiveProject(data.id);
-    status.textContent=recovered?`Проект загружен: ${data.storyboard.title} · восстановлено локальных AI-кадров: ${recovered}`:`Проект загружен: ${data.storyboard.title} · ${data.id}`;
-  }catch(error){status.innerHTML=`<span class="error">Ошибка загрузки проекта: ${escapeHtml(error.message)}</span>`;}
-}
-
-function cacheUrl(url,assetId){if(!url)return "";const separator=url.includes("?")?"&":"?";return `${url}${separator}_asset=${encodeURIComponent(assetId||Date.now())}`;}
-function previewUrl(media){return cacheUrl(media?.preview_url,media?.asset_id);}
-
-function characterReferenceHtml(project){
-  const media=project.character_reference;
-  if(!media)return `<div class="character-reference"><b>Character Reference:</b> <span class="muted">ещё не создан. Пока сцены генерируются только по текстовому описанию.</span></div>`;
-  const preview=media.preview_url?`<img src="${escapeHtml(previewUrl(media))}" alt="character reference">`:"";
-  return `<div class="character-reference"><b>Character Reference активен</b><div class="muted">Все новые AI-кадры будут использовать этот эталон через выбранный image provider.</div>${preview}<div class="muted">${escapeHtml(media.provider)} · ${escapeHtml(media.asset_id)}</div></div>`;
-}
-
-function selectedMediaHtml(scene){
-  const media=scene.selected_media;
-  if(!media)return `<div class="selected-media-slot"></div>`;
-  const preview=media.preview_url?`<img src="${escapeHtml(previewUrl(media))}" alt="preview" onerror="this.style.display='none';this.nextElementSibling.style.display='block'">`:"";
-  const errorHint=media.preview_url?`<div class="error preview-error" style="display:none">Preview не загрузился. Файл выбран и сохранён; обнови проект или проверь локальный media URL.</div>`:"";
-  return `<div class="selected-media-slot"><div class="selected-media"><b>Выбрано:</b> ${escapeHtml(media.provider)} · ${escapeHtml(media.asset_id)}${preview}${errorHint}<div class="muted">${escapeHtml(media.label||media.source_url)}</div></div></div>`;
-}
-
-function selectedAudioHtml(scene){
-  const audio=scene.selected_audio;
-  if(!audio)return `<div class="selected-audio-slot"></div>`;
-  const url=cacheUrl(audio.audio_url,audio.asset_id);
-  return `<div class="selected-audio-slot"><div class="selected-audio"><b>Озвучка:</b> ${escapeHtml(audio.provider)} · ${escapeHtml(audio.voice||"")}<audio controls preload="none" src="${escapeHtml(url)}"></audio><div class="muted">${escapeHtml(audio.label||audio.asset_id)}</div></div></div>`;
-}
-
-function sceneEditor(scene){
-  const dialogueText=(scene.dialogue||[]).join("\n");
-  return `<div class="scene-editor" data-scene-id="${escapeHtml(scene.id)}">
-    <div class="scene-head"><div><span class="badge">${escapeHtml(scene.id)}</span></div><div class="scene-actions">
-      <button class="secondary save-scene" type="button">Сохранить</button><button class="warn regen-scene" type="button">Перегенерировать</button><button class="media search-media" type="button">Найти stock</button><button class="ai generate-ai" type="button">Сгенерировать AI</button><button class="tts generate-audio" type="button">Озвучить</button>
-    </div></div>
-    <label>Название<input class="f-title" value="${escapeHtml(scene.title)}"></label>
-    <label>Длительность, сек<input class="f-duration" type="number" min="0.1" step="0.1" value="${escapeHtml(scene.duration_seconds)}"></label>
-    <label>Наррация<textarea class="f-narration">${escapeHtml(scene.narration)}</textarea></label>
-    <label>Диалоги — по одной реплике на строку<textarea class="f-dialogue">${escapeHtml(dialogueText)}</textarea></label>
-    <label>Действие<textarea class="f-action">${escapeHtml(scene.action)}</textarea></label>
-    <label>Visual prompt<textarea class="f-visual">${escapeHtml(scene.visual_prompt)}</textarea></label>
-    <label>Media search query<input class="f-search" value="${escapeHtml(scene.media_search_query)}"></label>
-    ${selectedMediaHtml(scene)}${selectedAudioHtml(scene)}<div class="scene-message muted"></div><div class="media-results"></div>
-  </div>`;
-}
-
-function renderProject(project){
-  currentProject=project;
-  const sb=project.storyboard,totalDuration=projectDuration(project);
-  const missingAi=sb.scenes.filter(scene=>!isGeneratedAiMedia(scene)).length;
-  const missingAudio=sb.scenes.filter(scene=>!scene.selected_audio).length;
-  result.innerHTML=`<h3>${escapeHtml(sb.title)}</h3><p>${escapeHtml(sb.logline)}</p><div class="muted">${escapeHtml(sb.visual_style)}</div>`+
-    `<div class="summary"><span class="badge">Сцен: ${escapeHtml(sb.scenes.length)}</span><span class="badge">Storyboard: ${escapeHtml(totalDuration.toFixed(1))}s</span><span class="badge">Project ID: ${escapeHtml(project.id)}</span><span class="badge">Без AI-кадра: ${missingAi}</span><span class="badge">Без озвучки: ${missingAudio}</span><span class="badge">Reference: ${project.character_reference?'ON':'OFF'}</span></div>`+
-    characterReferenceHtml(project)+
-    `<div class="project-actions"><button class="ai" id="generate-character-reference" type="button">${project.character_reference?'Перегенерировать эталон персонажа':'Создать эталон персонажа'}</button><button class="ai" id="generate-all-ai" type="button">Сгенерировать все отсутствующие AI</button><button class="tts" id="generate-all-audio" type="button">Озвучить все отсутствующие</button></div>`+
-    `<div id="bulk-progress" class="progress muted" style="display:none"></div>`+sb.scenes.map(sceneEditor).join("");
-  bindSceneButtons();bindProjectButtons();highlightActiveProject(project.id);
-}
-
-function updateSceneMediaInDom(sceneId,project){currentProject=project;const scene=sceneById(project,sceneId);const editor=document.querySelector(`.scene-editor[data-scene-id="${CSS.escape(sceneId)}"]`);if(!scene||!editor)return;const slot=editor.querySelector(".selected-media-slot");if(slot){const wrapper=document.createElement("div");wrapper.innerHTML=selectedMediaHtml(scene);slot.replaceWith(wrapper.firstElementChild);}}
-function updateSceneAudioInDom(sceneId,project){currentProject=project;const scene=sceneById(project,sceneId);const editor=document.querySelector(`.scene-editor[data-scene-id="${CSS.escape(sceneId)}"]`);if(!scene||!editor)return;const slot=editor.querySelector(".selected-audio-slot");if(slot){const wrapper=document.createElement("div");wrapper.innerHTML=selectedAudioHtml(scene);slot.replaceWith(wrapper.firstElementChild);}}
-
-function readSceneEditor(editor){return {title:editor.querySelector(".f-title").value.trim(),duration_seconds:Number(editor.querySelector(".f-duration").value),narration:editor.querySelector(".f-narration").value,dialogue:editor.querySelector(".f-dialogue").value.split("\n").map(v=>v.trim()).filter(Boolean),action:editor.querySelector(".f-action").value.trim(),visual_prompt:editor.querySelector(".f-visual").value.trim(),media_search_query:editor.querySelector(".f-search").value.trim()};}
-async function persistScene(editor){const sceneId=editor.dataset.sceneId;const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(readSceneEditor(editor))});const data=await response.json();if(!response.ok)throw new Error(data.detail||"Save failed");currentProject=data;updateSceneAudioInDom(sceneId,data);return data;}
-async function saveScene(editor){const message=editor.querySelector(".scene-message"),button=editor.querySelector(".save-scene");button.disabled=true;message.textContent="Сохраняю...";try{const data=await persistScene(editor);message.innerHTML=`<span class="success">Сохранено. Общая длительность: ${projectDuration(data).toFixed(1)}s</span>`;return data;}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;return null;}finally{button.disabled=false;}}
-async function regenerateScene(editor){const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"),button=editor.querySelector(".regen-scene");button.disabled=true;message.textContent="LLM перегенерирует только эту сцену...";try{const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/regenerate`,{method:"POST"});const data=await response.json();if(!response.ok)throw new Error(data.detail||"Regeneration failed");renderProject(data);setProjectInUrl(data.id);status.textContent=`Сцена ${sceneId} перегенерирована. Озвучку для неё нужно создать заново.`;}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;button.disabled=false;}}
-
-function renderMediaResults(editor,assets){const box=editor.querySelector(".media-results");if(!assets.length){box.innerHTML=`<div class="muted">Ничего не найдено.</div>`;return;}box.innerHTML=`<div class="media-grid">${assets.map((asset,index)=>`<div class="media-card">${asset.preview_url?`<img src="${escapeHtml(asset.preview_url)}" alt="${escapeHtml(asset.label)}">`:""}<div class="media-info"><b>${escapeHtml(asset.provider)}</b> · ${escapeHtml(asset.media_type)}<br>${escapeHtml(asset.width||"?")}×${escapeHtml(asset.height||"?")} ${asset.duration_seconds?`· ${escapeHtml(asset.duration_seconds)}s`:""}<button type="button" class="select-media" data-index="${index}">Выбрать</button></div></div>`).join("")}</div>`;box.querySelectorAll(".select-media").forEach(button=>button.addEventListener("click",()=>selectMedia(editor,assets[Number(button.dataset.index)])));}
-async function searchMedia(editor){const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"),button=editor.querySelector(".search-media"),query=editor.querySelector(".f-search").value.trim();button.disabled=true;message.textContent="Ищу stock-медиа...";editor.querySelector(".media-results").innerHTML="";try{const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/media/search?query=${encodeURIComponent(query)}`);const data=await response.json();if(!response.ok)throw new Error(data.detail||"Media search failed");message.textContent=`Найдено: ${data.results.length}`;renderMediaResults(editor,data.results);}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}finally{button.disabled=false;}}
-async function selectMedia(editor,asset){const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message");message.textContent="Сохраняю выбранный ассет...";try{const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/media/select`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(asset)});const data=await response.json();if(!response.ok)throw new Error(data.detail||"Media select failed");updateSceneMediaInDom(sceneId,data);setProjectInUrl(data.id);message.innerHTML=`<span class="success">Медиа выбрано и сохранено.</span>`;}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}}
-
-async function requestAiImage(sceneId){const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/media/generate-ai`,{method:"POST"});const data=await response.json();if(!response.ok)throw new Error(data.detail||"AI image generation failed");return data;}
-async function generateAiImage(editor){const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"),button=editor.querySelector(".generate-ai");button.disabled=true;message.textContent=currentProject.character_reference?"Генерируется AI-сцена с Character Reference...":"Генерируется AI-изображение...";try{await persistScene(editor);const data=await requestAiImage(sceneId);updateSceneMediaInDom(sceneId,data);setProjectInUrl(data.id);const provider=sceneById(data,sceneId)?.selected_media?.provider||"image provider";message.innerHTML=`<span class="success">AI-изображение готово: ${escapeHtml(provider)}.</span>`;status.textContent=`AI-изображение для ${sceneId} готово через ${provider}.`;}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}finally{button.disabled=false;}}
-
-async function requestAudio(sceneId){const response=await fetch(`/api/projects/${currentProject.id}/scenes/${sceneId}/audio/generate`,{method:"POST"});const data=await response.json();if(!response.ok)throw new Error(data.detail||"TTS generation failed");return data;}
-async function generateAudio(editor){const sceneId=editor.dataset.sceneId,message=editor.querySelector(".scene-message"),button=editor.querySelector(".generate-audio");button.disabled=true;message.textContent="TTS озвучивает сцену...";try{await persistScene(editor);const data=await requestAudio(sceneId);updateSceneAudioInDom(sceneId,data);setProjectInUrl(data.id);const provider=sceneById(data,sceneId)?.selected_audio?.provider||"TTS";message.innerHTML=`<span class="success">Озвучка готова: ${escapeHtml(provider)}.</span>`;status.textContent=`Озвучка для ${sceneId} готова через ${provider}.`;}catch(error){message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}finally{button.disabled=false;}}
-
-async function generateCharacterReference(){
-  if(!currentProject)return;
-  if(currentProject.character_reference&&!window.confirm("Перегенерировать эталон персонажа? Старые сцены не изменятся автоматически; новый reference будет использоваться только для следующих генераций."))return;
-  const button=document.getElementById("generate-character-reference");if(button)button.disabled=true;status.textContent="Создаётся эталон персонажа через выбранный image provider...";
-  try{const response=await fetch(`/api/projects/${currentProject.id}/character-reference/generate`,{method:"POST"});const data=await response.json();if(!response.ok)throw new Error(data.detail||"Character reference generation failed");renderProject(data);setProjectInUrl(data.id);status.textContent=`Character Reference создан через ${data.character_reference?.provider||"image provider"}.`;}
-  catch(error){status.innerHTML=`<span class="error">Ошибка Character Reference: ${escapeHtml(error.message)}</span>`;if(button)button.disabled=false;}
-}
-
-async function generateAllAiImages(){
-  if(!currentProject||bulkGenerationRunning||bulkAudioRunning)return;
-  const targets=currentProject.storyboard.scenes.filter(scene=>!isGeneratedAiMedia(scene));
-  if(!targets.length){status.textContent="Во всех сценах уже есть AI-изображения.";return;}
-  const referenceNote=currentProject.character_reference?" Character Reference будет применён ко всем новым сценам.":" Character Reference не создан: персонаж может отличаться между сценами.";
-  if(!window.confirm(`Сгенерировать ${targets.length} AI-изображений? В режиме auto сначала используется local provider; при fallback на OpenAI возможна тарификация. Генерация пойдёт строго по одной сцене.${referenceNote}`))return;
-  bulkGenerationRunning=true;const button=document.getElementById("generate-all-ai");const progress=document.getElementById("bulk-progress");if(button)button.disabled=true;progress.style.display="block";
-  let success=0;const failures=[];
-  for(let i=0;i<targets.length;i++){
-    const sceneId=targets[i].id;progress.textContent=`Генерация изображений ${i+1}/${targets.length}: ${sceneId}... Успешно: ${success}, ошибок: ${failures.length}`;status.textContent=`AI batch: ${i+1}/${targets.length} · ${sceneId}`;const editor=document.querySelector(`.scene-editor[data-scene-id="${CSS.escape(sceneId)}"]`);
-    try{if(editor)await persistScene(editor);const data=await requestAiImage(sceneId);updateSceneMediaInDom(sceneId,data);success++;const provider=sceneById(data,sceneId)?.selected_media?.provider||"image provider";const message=editor?.querySelector(".scene-message");if(message)message.innerHTML=`<span class="success">AI-кадр готов (${i+1}/${targets.length}) · ${escapeHtml(provider)}.</span>`;}
-    catch(error){failures.push(`${sceneId}: ${error.message}`);const message=editor?.querySelector(".scene-message");if(message)message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}
-  }
-  bulkGenerationRunning=false;if(button)button.disabled=false;progress.innerHTML=failures.length?`<span class="error">Готово: ${success}/${targets.length}. Ошибок: ${failures.length}. Повторный запуск обработает только недостающие сцены.</span>`:`<span class="success">Готово: ${success}/${targets.length}. Все отсутствующие AI-кадры сгенерированы.</span>`;status.textContent=`AI batch завершён: ${success} успешно, ${failures.length} ошибок.`;
-}
-
-async function generateAllAudio(){
-  if(!currentProject||bulkAudioRunning||bulkGenerationRunning)return;
-  const targets=currentProject.storyboard.scenes.filter(scene=>!scene.selected_audio&&(String(scene.narration||"").trim()||(scene.dialogue||[]).length));
-  if(!targets.length){status.textContent="Для всех сцен с текстом уже есть озвучка.";return;}
-  if(!window.confirm(`Озвучить ${targets.length} сцен? В режиме auto сначала используется Piper; при fallback на OpenAI возможна тарификация. Запросы пойдут строго по одной сцене.`))return;
-  bulkAudioRunning=true;const button=document.getElementById("generate-all-audio");const progress=document.getElementById("bulk-progress");if(button)button.disabled=true;progress.style.display="block";
-  let success=0;const failures=[];
-  for(let i=0;i<targets.length;i++){
-    const sceneId=targets[i].id;progress.textContent=`Озвучка ${i+1}/${targets.length}: ${sceneId}... Успешно: ${success}, ошибок: ${failures.length}`;status.textContent=`TTS batch: ${i+1}/${targets.length} · ${sceneId}`;const editor=document.querySelector(`.scene-editor[data-scene-id="${CSS.escape(sceneId)}"]`);
-    try{if(editor)await persistScene(editor);const data=await requestAudio(sceneId);updateSceneAudioInDom(sceneId,data);success++;const provider=sceneById(data,sceneId)?.selected_audio?.provider||"TTS";const message=editor?.querySelector(".scene-message");if(message)message.innerHTML=`<span class="success">Озвучка готова (${i+1}/${targets.length}) · ${escapeHtml(provider)}.</span>`;}
-    catch(error){failures.push(`${sceneId}: ${error.message}`);const message=editor?.querySelector(".scene-message");if(message)message.innerHTML=`<span class="error">${escapeHtml(error.message)}</span>`;}
-  }
-  bulkAudioRunning=false;if(button)button.disabled=false;progress.innerHTML=failures.length?`<span class="error">Озвучено: ${success}/${targets.length}. Ошибок: ${failures.length}. Повторный запуск обработает только недостающие сцены.</span>`:`<span class="success">Озвучено: ${success}/${targets.length}. Все сцены с текстом готовы.</span>`;status.textContent=`TTS batch завершён: ${success} успешно, ${failures.length} ошибок.`;
-}
-
-function bindSceneButtons(){document.querySelectorAll(".scene-editor").forEach(editor=>{editor.querySelector(".save-scene").addEventListener("click",()=>saveScene(editor));editor.querySelector(".regen-scene").addEventListener("click",()=>regenerateScene(editor));editor.querySelector(".search-media").addEventListener("click",()=>searchMedia(editor));editor.querySelector(".generate-ai").addEventListener("click",()=>generateAiImage(editor));editor.querySelector(".generate-audio").addEventListener("click",()=>generateAudio(editor));});}
-function bindProjectButtons(){const all=document.getElementById("generate-all-ai");if(all)all.addEventListener("click",generateAllAiImages);const audio=document.getElementById("generate-all-audio");if(audio)audio.addEventListener("click",generateAllAudio);const ref=document.getElementById("generate-character-reference");if(ref)ref.addEventListener("click",generateCharacterReference);}
-function bindRecentProjects(){document.querySelectorAll(".recent-project").forEach(item=>{const open=()=>loadProject(item.dataset.projectId);item.addEventListener("click",open);item.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();open();}});});}
-
-form.addEventListener("submit",async(event)=>{event.preventDefault();submit.disabled=true;status.textContent="LLM генерирует storyboard...";result.innerHTML="";const body={prompt:document.getElementById("prompt").value,project_type:document.getElementById("project_type").value,aspect_ratio:document.getElementById("aspect_ratio").value,duration_seconds:Number(document.getElementById("duration_seconds").value),language:"ru"};try{const response=await fetch("/api/projects",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const data=await response.json();if(!response.ok)throw new Error(data.detail||"Unknown error");status.textContent="Готово. Теперь можно создать Character Reference, кадры и озвучку.";renderProject(data);setProjectInUrl(data.id);}catch(error){status.innerHTML=`<span class="error">Ошибка: ${escapeHtml(error.message)}</span>`;}finally{submit.disabled=false;}});
-
-bindRecentProjects();
-const initialProjectId=new URLSearchParams(window.location.search).get("project");
-if(initialProjectId)loadProject(initialProjectId);
+const form=document.getElementById('project-form'),result=document.getElementById('result'),status=document.getElementById('status'),submit=document.getElementById('submit');
+let currentProject=null,bulkGenerationRunning=false,bulkAudioRunning=false;
+const esc=v=>String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
+const duration=p=>p.storyboard.scenes.reduce((s,x)=>s+Number(x.duration_seconds||0),0);
+const sceneById=(p,id)=>p?.storyboard?.scenes?.find(s=>s.id===id)||null;
+const cacheUrl=(u,id)=>u?`${u}${u.includes('?')?'&':'?'}_asset=${encodeURIComponent(id||Date.now())}`:'';
+function setUrl(id){const u=new URL(location.href);id?u.searchParams.set('project',id):u.searchParams.delete('project');history.replaceState({},'',u)}
+function active(id){document.querySelectorAll('.recent-project').forEach(x=>x.classList.toggle('active',x.dataset.projectId===id))}
+function referenceHtml(p){const m=p.character_reference;if(!m)return `<div class="character-reference"><b>Character Reference:</b> <span class="muted">не создан.</span></div>`;return `<div class="character-reference"><b>Character Reference</b><div class="muted">Local draft по умолчанию его НЕ использует. OpenAI final — использует. Для каждой сцены это можно переключить.</div>${m.preview_url?`<img src="${esc(cacheUrl(m.preview_url,m.asset_id))}">`:''}<div class="muted">${esc(m.provider)} · ${esc(m.asset_id)}</div></div>`}
+function mediaHtml(s){const m=s.selected_media;if(!m)return `<div class="selected-media-slot"></div>`;return `<div class="selected-media-slot"><div class="selected-media"><b>Изображение:</b> ${esc(m.provider)} · ${esc(m.asset_id)}${m.preview_url?`<img src="${esc(cacheUrl(m.preview_url,m.asset_id))}">`:''}<div class="muted">${esc(m.label||m.source_url)}</div></div></div>`}
+function audioHtml(s){const a=s.selected_audio;if(!a)return `<div class="selected-audio-slot"></div>`;return `<div class="selected-audio-slot"><div class="selected-audio"><b>Озвучка:</b> ${esc(a.provider)} · ${esc(a.voice||'')}<audio controls preload="none" src="${esc(cacheUrl(a.audio_url,a.asset_id))}"></audio><div class="muted">${esc(a.label||a.asset_id)}</div></div></div>`}
+function sceneEditor(s){return `<div class="scene-editor" data-scene-id="${esc(s.id)}"><div class="scene-head"><span class="badge">${esc(s.id)}</span><div class="scene-actions"><button class="secondary save-scene">Сохранить</button><button class="warn regen-scene">Перегенерировать</button><button class="media search-media">Найти stock</button><button class="local generate-local">Draft local</button><button class="openai generate-openai">Final OpenAI</button><button class="tts generate-audio">Озвучить</button></div></div><label>Название<input class="f-title" value="${esc(s.title)}"></label><label>Длительность, сек<input class="f-duration" type="number" min="0.1" step="0.1" value="${esc(s.duration_seconds)}"></label><label>Наррация<textarea class="f-narration">${esc(s.narration)}</textarea></label><label>Диалоги — по одной реплике на строку<textarea class="f-dialogue">${esc((s.dialogue||[]).join('\n'))}</textarea></label><label>Действие<textarea class="f-action">${esc(s.action)}</textarea></label><label>Visual prompt<textarea class="f-visual">${esc(s.visual_prompt)}</textarea></label><label>Media search query<input class="f-search" value="${esc(s.media_search_query)}"></label><label class="reference-toggle"><input type="checkbox" class="use-reference">Использовать Character Reference для этой генерации</label>${mediaHtml(s)}${audioHtml(s)}<div class="scene-message muted"></div><div class="media-results"></div></div>`}
+function renderProject(p){currentProject=p;const sb=p.storyboard,missingAudio=sb.scenes.filter(s=>!s.selected_audio).length;result.innerHTML=`<h3>${esc(sb.title)}</h3><p>${esc(sb.logline)}</p><div class="muted">${esc(sb.visual_style)}</div><div class="summary"><span class="badge">Сцен: ${sb.scenes.length}</span><span class="badge">Storyboard: ${duration(p).toFixed(1)}s</span><span class="badge">Project ID: ${esc(p.id)}</span><span class="badge">Без озвучки: ${missingAudio}</span><span class="badge">Reference: ${p.character_reference?'ON':'OFF'}</span></div>${referenceHtml(p)}<div class="project-actions"><button class="openai" id="generate-character-reference">${p.character_reference?'Перегенерировать эталон':'Создать эталон персонажа'}</button><button class="local" id="generate-all-local">Все draft локально</button><button class="openai" id="generate-all-openai">Все final OpenAI</button><button class="tts" id="generate-all-audio">Озвучить все отсутствующие</button></div><div id="bulk-progress" class="progress muted" style="display:none"></div>${sb.scenes.map(sceneEditor).join('')}`;bindSceneButtons();bindProjectButtons();active(p.id)}
+function updateMedia(id,p){currentProject=p;const s=sceneById(p,id),e=document.querySelector(`.scene-editor[data-scene-id="${CSS.escape(id)}"]`),slot=e?.querySelector('.selected-media-slot');if(s&&slot){const w=document.createElement('div');w.innerHTML=mediaHtml(s);slot.replaceWith(w.firstElementChild)}}
+function updateAudio(id,p){currentProject=p;const s=sceneById(p,id),e=document.querySelector(`.scene-editor[data-scene-id="${CSS.escape(id)}"]`),slot=e?.querySelector('.selected-audio-slot');if(s&&slot){const w=document.createElement('div');w.innerHTML=audioHtml(s);slot.replaceWith(w.firstElementChild)}}
+function readScene(e){return{title:e.querySelector('.f-title').value.trim(),duration_seconds:Number(e.querySelector('.f-duration').value),narration:e.querySelector('.f-narration').value,dialogue:e.querySelector('.f-dialogue').value.split('\n').map(v=>v.trim()).filter(Boolean),action:e.querySelector('.f-action').value.trim(),visual_prompt:e.querySelector('.f-visual').value.trim(),media_search_query:e.querySelector('.f-search').value.trim()}}
+async function persistScene(e){const id=e.dataset.sceneId,r=await fetch(`/api/projects/${currentProject.id}/scenes/${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(readScene(e))}),d=await r.json();if(!r.ok)throw new Error(d.detail||'Save failed');currentProject=d;updateAudio(id,d);return d}
+async function saveScene(e){const m=e.querySelector('.scene-message');try{const d=await persistScene(e);m.innerHTML=`<span class="success">Сохранено · ${duration(d).toFixed(1)}s</span>`}catch(x){m.innerHTML=`<span class="error">${esc(x.message)}</span>`}}
+async function regenerateScene(e){const id=e.dataset.sceneId,m=e.querySelector('.scene-message');m.textContent='LLM перегенерирует сцену...';try{const r=await fetch(`/api/projects/${currentProject.id}/scenes/${id}/regenerate`,{method:'POST'}),d=await r.json();if(!r.ok)throw new Error(d.detail);renderProject(d);setUrl(d.id)}catch(x){m.innerHTML=`<span class="error">${esc(x.message)}</span>`}}
+async function requestImage(id,provider,useRef){const q=new URLSearchParams({provider,use_reference:String(useRef)}),r=await fetch(`/api/projects/${currentProject.id}/scenes/${id}/media/generate-ai?${q}`,{method:'POST'}),d=await r.json();if(!r.ok)throw new Error(d.detail||'Image generation failed');return d}
+async function generateImage(e,provider){const id=e.dataset.sceneId,m=e.querySelector('.scene-message'),useRef=e.querySelector('.use-reference').checked,button=e.querySelector(provider==='local'?'.generate-local':'.generate-openai');button.disabled=true;m.textContent=`${provider==='local'?'Local draft':'OpenAI final'} · reference=${useRef?'ON':'OFF'}...`;try{await persistScene(e);const d=await requestImage(id,provider,useRef);updateMedia(id,d);setUrl(d.id);const p=sceneById(d,id)?.selected_media?.provider;m.innerHTML=`<span class="success">Готово: ${esc(p)} · reference=${useRef?'ON':'OFF'}.</span>`}catch(x){m.innerHTML=`<span class="error">${esc(x.message)}</span>`}finally{button.disabled=false}}
+async function searchMedia(e){const id=e.dataset.sceneId,q=e.querySelector('.f-search').value.trim(),box=e.querySelector('.media-results'),m=e.querySelector('.scene-message');try{const r=await fetch(`/api/projects/${currentProject.id}/scenes/${id}/media/search?query=${encodeURIComponent(q)}`),d=await r.json();if(!r.ok)throw new Error(d.detail);m.textContent=`Найдено: ${d.results.length}`;box.innerHTML=`<div class="media-grid">${d.results.map((a,i)=>`<div class="media-card">${a.preview_url?`<img src="${esc(a.preview_url)}">`:''}<div class="media-info"><b>${esc(a.provider)}</b><button class="select-media" data-i="${i}">Выбрать</button></div></div>`).join('')}</div>`;box.querySelectorAll('.select-media').forEach(b=>b.onclick=()=>selectMedia(e,d.results[Number(b.dataset.i)]))}catch(x){m.innerHTML=`<span class="error">${esc(x.message)}</span>`}}
+async function selectMedia(e,a){const id=e.dataset.sceneId,r=await fetch(`/api/projects/${currentProject.id}/scenes/${id}/media/select`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(a)}),d=await r.json();if(r.ok)updateMedia(id,d)}
+async function requestAudio(id){const r=await fetch(`/api/projects/${currentProject.id}/scenes/${id}/audio/generate`,{method:'POST'}),d=await r.json();if(!r.ok)throw new Error(d.detail||'TTS failed');return d}
+async function generateAudio(e){const id=e.dataset.sceneId,m=e.querySelector('.scene-message');try{await persistScene(e);const d=await requestAudio(id);updateAudio(id,d);m.innerHTML=`<span class="success">Озвучка готова: ${esc(sceneById(d,id)?.selected_audio?.provider||'TTS')}</span>`}catch(x){m.innerHTML=`<span class="error">${esc(x.message)}</span>`}}
+async function generateCharacterReference(){if(!currentProject)return;if(currentProject.character_reference&&!confirm('Перегенерировать Character Reference?'))return;status.textContent='Создаю Character Reference...';try{const r=await fetch(`/api/projects/${currentProject.id}/character-reference/generate`,{method:'POST'}),d=await r.json();if(!r.ok)throw new Error(d.detail);renderProject(d);status.textContent=`Character Reference создан через ${d.character_reference?.provider||'provider'}.`}catch(x){status.innerHTML=`<span class="error">${esc(x.message)}</span>`}}
+async function generateAll(provider){if(!currentProject||bulkGenerationRunning||bulkAudioRunning)return;const targets=currentProject.storyboard.scenes;const useRefDefault=provider==='openai';const cost=provider==='openai'?' OpenAI API может тарифицироваться.':'';if(!confirm(`Перегенерировать ${targets.length} сцен: ${provider==='local'?'local draft без reference по умолчанию':'OpenAI final с reference по умолчанию'}?${cost}`))return;bulkGenerationRunning=true;const progress=document.getElementById('bulk-progress');progress.style.display='block';let ok=0,fail=0;for(let i=0;i<targets.length;i++){const id=targets[i].id,e=document.querySelector(`.scene-editor[data-scene-id="${CSS.escape(id)}"]`);progress.textContent=`${provider}: ${i+1}/${targets.length} · ${id}`;try{if(e)await persistScene(e);const useRef=e?e.querySelector('.use-reference').checked:useRefDefault;const d=await requestImage(id,provider,useRef);updateMedia(id,d);ok++}catch(x){fail++;if(e)e.querySelector('.scene-message').innerHTML=`<span class="error">${esc(x.message)}</span>`}}bulkGenerationRunning=false;progress.innerHTML=`<span class="${fail?'error':'success'}">Готово: ${ok}, ошибок: ${fail}</span>`}
+async function generateAllAudio(){if(!currentProject||bulkAudioRunning||bulkGenerationRunning)return;const targets=currentProject.storyboard.scenes.filter(s=>!s.selected_audio&&(s.narration||(s.dialogue||[]).length));bulkAudioRunning=true;const p=document.getElementById('bulk-progress');p.style.display='block';let ok=0,fail=0;for(let i=0;i<targets.length;i++){try{const d=await requestAudio(targets[i].id);updateAudio(targets[i].id,d);ok++}catch(x){fail++}}bulkAudioRunning=false;p.innerHTML=`<span class="${fail?'error':'success'}">Озвучено: ${ok}, ошибок: ${fail}</span>`}
+function bindSceneButtons(){document.querySelectorAll('.scene-editor').forEach(e=>{e.querySelector('.save-scene').onclick=()=>saveScene(e);e.querySelector('.regen-scene').onclick=()=>regenerateScene(e);e.querySelector('.search-media').onclick=()=>searchMedia(e);e.querySelector('.generate-local').onclick=()=>generateImage(e,'local');e.querySelector('.generate-openai').onclick=()=>{e.querySelector('.use-reference').checked=!!currentProject.character_reference;generateImage(e,'openai')};e.querySelector('.generate-audio').onclick=()=>generateAudio(e)})}
+function bindProjectButtons(){document.getElementById('generate-character-reference')?.addEventListener('click',generateCharacterReference);document.getElementById('generate-all-local')?.addEventListener('click',()=>generateAll('local'));document.getElementById('generate-all-openai')?.addEventListener('click',()=>generateAll('openai'));document.getElementById('generate-all-audio')?.addEventListener('click',generateAllAudio)}
+async function loadProject(id){if(!id)return;status.textContent=`Загружаю ${id}...`;try{const r=await fetch(`/api/projects/${encodeURIComponent(id)}`),d=await r.json();if(!r.ok)throw new Error(d.detail);renderProject(d);setUrl(d.id);active(d.id);status.textContent=`Проект загружен: ${d.storyboard.title}`}catch(x){status.innerHTML=`<span class="error">${esc(x.message)}</span>`}}
+document.querySelectorAll('.recent-project').forEach(x=>x.onclick=()=>loadProject(x.dataset.projectId));
+form.onsubmit=async ev=>{ev.preventDefault();submit.disabled=true;status.textContent='LLM генерирует storyboard...';result.innerHTML='';const body={prompt:document.getElementById('prompt').value,project_type:document.getElementById('project_type').value,aspect_ratio:document.getElementById('aspect_ratio').value,duration_seconds:Number(document.getElementById('duration_seconds').value),language:'ru'};try{const r=await fetch('/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),d=await r.json();if(!r.ok)throw new Error(d.detail);renderProject(d);setUrl(d.id);status.textContent='Storyboard готов.'}catch(x){status.innerHTML=`<span class="error">${esc(x.message)}</span>`}finally{submit.disabled=false}};
+const initial=new URLSearchParams(location.search).get('project');if(initial)loadProject(initial);
 </script>
 </body>
 </html>
