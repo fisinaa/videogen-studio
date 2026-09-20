@@ -12,21 +12,25 @@ class StableDiffusionCppProvider:
     name = "local_image"
 
     def _shared_file(self, preferred: Path, fallback: Path) -> Path:
-        return preferred if str(preferred).strip() and preferred.is_file() else fallback
+        return preferred if preferred.is_file() else fallback
 
     def profile_enabled(self, profile: str) -> bool:
         profile = profile.strip().lower()
         if profile == "quality":
             model = settings.sd_cpp_quality_diffusion_model
             vae = self._shared_file(settings.sd_cpp_quality_vae, settings.sd_cpp_vae)
+            llm = settings.sd_cpp_quality_llm
             clip_l = self._shared_file(settings.sd_cpp_quality_clip_l, settings.sd_cpp_clip_l)
             t5xxl = self._shared_file(settings.sd_cpp_quality_t5xxl, settings.sd_cpp_t5xxl)
-        else:
-            model = settings.sd_cpp_diffusion_model
-            vae = settings.sd_cpp_vae
-            clip_l = settings.sd_cpp_clip_l
-            t5xxl = settings.sd_cpp_t5xxl
-        required = [settings.sd_cpp_bin, model, vae, clip_l, t5xxl]
+            text_encoder_ok = llm.is_file() or (clip_l.is_file() and t5xxl.is_file())
+            return settings.sd_cpp_bin.is_file() and model.is_file() and vae.is_file() and text_encoder_ok
+        required = [
+            settings.sd_cpp_bin,
+            settings.sd_cpp_diffusion_model,
+            settings.sd_cpp_vae,
+            settings.sd_cpp_clip_l,
+            settings.sd_cpp_t5xxl,
+        ]
         return all(path.is_file() for path in required)
 
     @property
@@ -43,14 +47,17 @@ class StableDiffusionCppProvider:
             if not self.quality_enabled:
                 raise RuntimeError(
                     "Local quality image profile is not configured. Set "
-                    "SD_CPP_QUALITY_DIFFUSION_MODEL and any required encoder overrides."
+                    "SD_CPP_QUALITY_DIFFUSION_MODEL plus VAE and either "
+                    "SD_CPP_QUALITY_LLM or CLIP/T5 encoders."
                 )
+            llm = settings.sd_cpp_quality_llm if settings.sd_cpp_quality_llm.is_file() else None
             return {
                 "name": "quality",
                 "model": settings.sd_cpp_quality_diffusion_model,
                 "vae": self._shared_file(settings.sd_cpp_quality_vae, settings.sd_cpp_vae),
                 "clip_l": self._shared_file(settings.sd_cpp_quality_clip_l, settings.sd_cpp_clip_l),
                 "t5xxl": self._shared_file(settings.sd_cpp_quality_t5xxl, settings.sd_cpp_t5xxl),
+                "llm": llm,
                 "steps": settings.sd_cpp_quality_steps,
                 "cfg_scale": settings.sd_cpp_quality_cfg_scale,
                 "sampling_method": settings.sd_cpp_quality_sampling_method,
@@ -66,6 +73,7 @@ class StableDiffusionCppProvider:
             "vae": settings.sd_cpp_vae,
             "clip_l": settings.sd_cpp_clip_l,
             "t5xxl": settings.sd_cpp_t5xxl,
+            "llm": None,
             "steps": settings.sd_cpp_steps,
             "cfg_scale": settings.sd_cpp_cfg_scale,
             "sampling_method": settings.sd_cpp_sampling_method,
@@ -99,15 +107,20 @@ class StableDiffusionCppProvider:
             str(settings.sd_cpp_bin),
             "--diffusion-model", str(p["model"]),
             "--vae", str(p["vae"]),
-            "--clip_l", str(p["clip_l"]),
-            "--t5xxl", str(p["t5xxl"]),
+        ]
+        if p["llm"] is not None:
+            cmd.extend(["--llm", str(p["llm"])])
+        else:
+            cmd.extend(["--clip_l", str(p["clip_l"]), "--t5xxl", str(p["t5xxl"])])
+
+        cmd.extend([
             "-p", prompt,
             "-W", str(width),
             "-H", str(height),
             "--steps", str(p["steps"]),
             "--cfg-scale", str(p["cfg_scale"]),
             "--sampling-method", str(p["sampling_method"]),
-        ]
+        ])
 
         backend = settings.sd_cpp_backend.strip()
         if backend:
@@ -153,6 +166,7 @@ class StableDiffusionCppProvider:
 
         local_url = f"/api/projects/{project_id}/media/{filename}"
         mode = "img2img reference" if reference_path is not None else "text-to-image"
+        encoder = p["llm"].name if p["llm"] is not None else "clip_l+t5xxl"
         return MediaAsset(
             provider=self.name,
             asset_id=filename,
@@ -166,7 +180,7 @@ class StableDiffusionCppProvider:
             author="local",
             label=(
                 f"stable-diffusion.cpp · {p['name']} · {p['model'].name} · "
-                f"{width}x{height} · {mode} · {scene_id}"
+                f"encoder={encoder} · {width}x{height} · {mode} · {scene_id}"
             ),
             local_path=f"media/{filename}",
         )
