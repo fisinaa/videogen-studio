@@ -40,15 +40,16 @@ class MediaRouter:
             if isinstance(batch, Exception):
                 continue
             assets.extend(batch)
-
         return assets
 
-    def _image_providers(self):
-        mode = settings.image_provider.strip().lower()
+    def _image_providers(self, provider: str | None = None):
+        mode = (provider or settings.image_provider).strip().lower()
         if mode == "local":
             return [self.local_image]
         if mode == "openai":
             return [self.openai_image]
+        if mode != "auto":
+            raise ValueError(f"Unknown image provider mode: {mode}")
         return [self.local_image, self.openai_image]
 
     async def generate_image(
@@ -60,14 +61,16 @@ class MediaRouter:
         scene_id: str,
         media_dir: Path,
         reference_path: Path | None = None,
+        provider: str | None = None,
     ) -> MediaAsset:
+        mode = (provider or settings.image_provider).strip().lower()
         errors: list[str] = []
-        for provider in self._image_providers():
-            if not provider.enabled:
-                errors.append(f"{provider.name}: disabled")
+        for image_provider in self._image_providers(mode):
+            if not image_provider.enabled:
+                errors.append(f"{image_provider.name}: disabled")
                 continue
             try:
-                return await provider.generate(
+                return await image_provider.generate(
                     prompt=prompt,
                     aspect_ratio=aspect_ratio,
                     project_id=project_id,
@@ -76,8 +79,8 @@ class MediaRouter:
                     reference_path=reference_path,
                 )
             except Exception as exc:
-                errors.append(f"{provider.name}: {exc}")
-                if settings.image_provider.strip().lower() != "auto":
+                errors.append(f"{image_provider.name}: {exc}")
+                if mode != "auto":
                     raise
         raise RuntimeError("No image provider succeeded: " + "; ".join(errors))
 
