@@ -47,16 +47,15 @@ class Settings(BaseSettings):
     sd_cpp_cfg_scale: float = 1.0
     sd_cpp_sampling_method: str = "euler"
 
-    # Local QUALITY profile. Leave model empty until a second model is installed.
+    # Local QUALITY profile. Supports either FLUX-style CLIP/T5 or an --llm encoder (e.g. Z-Image).
     sd_cpp_quality_diffusion_model: Path = Path("")
     sd_cpp_quality_steps: int = 8
     sd_cpp_quality_cfg_scale: float = 1.0
     sd_cpp_quality_sampling_method: str = "euler"
-
-    # Optional per-quality-profile encoder overrides. Empty = reuse shared files above.
     sd_cpp_quality_vae: Path = Path("")
     sd_cpp_quality_clip_l: Path = Path("")
     sd_cpp_quality_t5xxl: Path = Path("")
+    sd_cpp_quality_llm: Path = Path("")
 
     # Legacy compatibility. Ignored when SD_CPP_BACKEND is set.
     sd_cpp_clip_on_cpu: bool = True
