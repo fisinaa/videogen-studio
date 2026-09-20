@@ -19,6 +19,8 @@ class MediaRouter:
         result = {provider.name: provider.enabled for provider in self.search_providers}
         result[self.openai_image.name] = self.openai_image.enabled
         result[self.local_image.name] = self.local_image.enabled
+        result["local_fast"] = self.local_image.enabled
+        result["local_quality"] = self.local_image.quality_enabled
         result["image_selected"] = settings.image_provider
         return result
 
@@ -29,28 +31,16 @@ class MediaRouter:
         enabled = [provider for provider in self.search_providers if provider.enabled]
         if not enabled:
             return []
-
         batches = await asyncio.gather(
             *(provider.search(query, limit=limit_per_provider) for provider in enabled),
             return_exceptions=True,
         )
-
         assets: list[MediaAsset] = []
         for batch in batches:
             if isinstance(batch, Exception):
                 continue
             assets.extend(batch)
         return assets
-
-    def _image_providers(self, provider: str | None = None):
-        mode = (provider or settings.image_provider).strip().lower()
-        if mode == "local":
-            return [self.local_image]
-        if mode == "openai":
-            return [self.openai_image]
-        if mode != "auto":
-            raise ValueError(f"Unknown image provider mode: {mode}")
-        return [self.local_image, self.openai_image]
 
     async def generate_image(
         self,
@@ -64,24 +54,87 @@ class MediaRouter:
         provider: str | None = None,
     ) -> MediaAsset:
         mode = (provider or settings.image_provider).strip().lower()
+
+        if mode in {"local", "local_fast"}:
+            return await self.local_image.generate(
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                project_id=project_id,
+                scene_id=scene_id,
+                media_dir=media_dir,
+                reference_path=reference_path,
+                profile="fast",
+            )
+        if mode == "local_quality":
+            return await self.local_image.generate(
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                project_id=project_id,
+                scene_id=scene_id,
+                media_dir=media_dir,
+                reference_path=reference_path,
+                profile="quality",
+            )
+        if mode == "openai":
+            return await self.openai_image.generate(
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                project_id=project_id,
+                scene_id=scene_id,
+                media_dir=media_dir,
+                reference_path=reference_path,
+            )
+        if mode != "auto":
+            raise ValueError(f"Unknown image provider mode: {mode}")
+
         errors: list[str] = []
-        for image_provider in self._image_providers(mode):
-            if not image_provider.enabled:
-                errors.append(f"{image_provider.name}: disabled")
-                continue
-            try:
-                return await image_provider.generate(
+        for name, fn in (
+            (
+                "local_quality",
+                lambda: self.local_image.generate(
                     prompt=prompt,
                     aspect_ratio=aspect_ratio,
                     project_id=project_id,
                     scene_id=scene_id,
                     media_dir=media_dir,
                     reference_path=reference_path,
-                )
+                    profile="quality",
+                ),
+            ),
+            (
+                "local_fast",
+                lambda: self.local_image.generate(
+                    prompt=prompt,
+                    aspect_ratio=aspect_ratio,
+                    project_id=project_id,
+                    scene_id=scene_id,
+                    media_dir=media_dir,
+                    reference_path=reference_path,
+                    profile="fast",
+                ),
+            ),
+            (
+                "openai",
+                lambda: self.openai_image.generate(
+                    prompt=prompt,
+                    aspect_ratio=aspect_ratio,
+                    project_id=project_id,
+                    scene_id=scene_id,
+                    media_dir=media_dir,
+                    reference_path=reference_path,
+                ),
+            ),
+        ):
+            try:
+                if name == "local_quality" and not self.local_image.quality_enabled:
+                    raise RuntimeError("disabled")
+                if name == "local_fast" and not self.local_image.enabled:
+                    raise RuntimeError("disabled")
+                if name == "openai" and not self.openai_image.enabled:
+                    raise RuntimeError("disabled")
+                return await fn()
             except Exception as exc:
-                errors.append(f"{image_provider.name}: {exc}")
-                if mode != "auto":
-                    raise
+                errors.append(f"{name}: {exc}")
         raise RuntimeError("No image provider succeeded: " + "; ".join(errors))
 
 
