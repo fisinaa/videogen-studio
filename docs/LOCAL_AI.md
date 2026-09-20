@@ -5,11 +5,23 @@ VideoGen routes TTS and image generation between local providers and OpenAI.
 ## Modes
 
 ```env
-TTS_PROVIDER=auto       # auto | piper | openai
-IMAGE_PROVIDER=auto     # auto | local | openai
+TTS_PROVIDER=auto
+IMAGE_PROVIDER=auto
 ```
 
-`auto` remains the default backend route for API calls that do not choose a provider explicitly. The web UI now exposes explicit **Local Draft** and **OpenAI Final** actions per scene.
+Image route values:
+
+```text
+auto | local | local_fast | local_quality | openai
+```
+
+`auto` order is now:
+
+```text
+Local Quality -> Local Fast -> OpenAI
+```
+
+The web UI exposes explicit **Local Fast**, **Local Quality**, and **OpenAI Final** actions per scene.
 
 ## Piper local TTS (CPU)
 
@@ -21,8 +33,6 @@ Current tested layout:
 /opt/piper/models/ru_RU-irina-medium.onnx.json
 ```
 
-`.env`:
-
 ```env
 TTS_PROVIDER=auto
 PIPER_BIN=/opt/piper/venv/bin/piper
@@ -30,9 +40,9 @@ PIPER_MODEL=/opt/piper/models/ru_RU-irina-medium.onnx
 PIPER_TIMEOUT_SECONDS=120
 ```
 
-Piper receives UTF-8 text on stdin and writes WAV files to the project `audio/` directory. It runs on CPU and leaves the GTX 1660 free for LLM/image work.
+Piper runs on CPU and leaves the GTX 1660 free for image/LLM work.
 
-## Local image generation with stable-diffusion.cpp
+## Local Fast profile
 
 Current tested hardware/profile:
 
@@ -48,18 +58,17 @@ CPU offload: enabled
 VRAM reserve: --max-vram -1
 ```
 
-`.env`:
-
 ```env
-IMAGE_PROVIDER=auto
 SD_CPP_BIN=/home/faa/stable-diffusion.cpp/build/bin/sd-cli
-SD_CPP_DIFFUSION_MODEL=/home/faa/models/flux/flux1-schnell-q2_k.gguf
 SD_CPP_VAE=/home/faa/models/flux/ae.safetensors
 SD_CPP_CLIP_L=/home/faa/models/flux/clip_l.safetensors
 SD_CPP_T5XXL=/home/faa/models/flux/t5xxl_fp16.safetensors
+
+SD_CPP_DIFFUSION_MODEL=/home/faa/models/flux/flux1-schnell-q2_k.gguf
 SD_CPP_STEPS=4
 SD_CPP_CFG_SCALE=1.0
 SD_CPP_SAMPLING_METHOD=euler
+
 SD_CPP_TIMEOUT_SECONDS=600
 SD_CPP_BACKEND=all=cuda0,te=cpu
 SD_CPP_OFFLOAD_TO_CPU=true
@@ -67,75 +76,79 @@ SD_CPP_MAX_VRAM=-1
 SD_CPP_DIFFUSION_FA=true
 SD_CPP_THREADS=14
 SD_CPP_VERBOSE=true
-SD_CPP_WIDTH_16_9=768
-SD_CPP_HEIGHT_16_9=432
-SD_CPP_WIDTH_9_16=432
-SD_CPP_HEIGHT_9_16=768
-SD_CPP_WIDTH_1_1=512
-SD_CPP_HEIGHT_1_1=512
 ```
 
-Equivalent standalone profile:
+## Local Quality profile
 
-```bash
-cd ~/stable-diffusion.cpp
+A second local model can be configured independently. The UI enables **Local Quality** automatically when the required files exist.
 
-./build/bin/sd-cli \
-  --diffusion-model ~/models/flux/flux1-schnell-q2_k.gguf \
-  --vae ~/models/flux/ae.safetensors \
-  --clip_l ~/models/flux/clip_l.safetensors \
-  --t5xxl ~/models/flux/t5xxl_fp16.safetensors \
-  -p "cute small gray mouse standing near a river, children's animated movie, cinematic forest background, soft morning light" \
-  -W 512 -H 512 \
-  --steps 4 \
-  --cfg-scale 1.0 \
-  --sampling-method euler \
-  --backend all=cuda0,te=cpu \
-  --offload-to-cpu \
-  --max-vram -1 \
-  --diffusion-fa \
-  -t 14 \
-  -o ~/flux-test.png \
-  -v
+For FLUX-style models, configure a diffusion model and optionally override CLIP/T5/VAE:
+
+```env
+SD_CPP_QUALITY_DIFFUSION_MODEL=/path/to/model.gguf
+SD_CPP_QUALITY_STEPS=8
+SD_CPP_QUALITY_CFG_SCALE=1.0
+SD_CPP_QUALITY_SAMPLING_METHOD=euler
+SD_CPP_QUALITY_VAE=
+SD_CPP_QUALITY_CLIP_L=
+SD_CPP_QUALITY_T5XXL=
 ```
 
-## Image workflow
+For newer pipelines such as Z-Image-Turbo, use an LLM text encoder instead:
 
-The tested FLUX Q2_K img2img path follows a Character Reference too strongly and can preserve the neutral reference pose/background instead of following the scene prompt. Therefore the default workflow is deliberately split:
+```env
+SD_CPP_QUALITY_DIFFUSION_MODEL=/home/faa/models/z-image/z_image_turbo-Q3_K.gguf
+SD_CPP_QUALITY_VAE=/home/faa/models/flux/ae.safetensors
+SD_CPP_QUALITY_LLM=/home/faa/models/z-image/Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+SD_CPP_QUALITY_STEPS=8
+SD_CPP_QUALITY_CFG_SCALE=1.0
+SD_CPP_QUALITY_SAMPLING_METHOD=euler
+```
+
+When `SD_CPP_QUALITY_LLM` points to a real file, VideoGen builds the quality command with `--llm` instead of `--clip_l/--t5xxl`.
+
+## Scene image gallery
+
+Each scene now stores:
 
 ```text
-Local Draft
-  provider = local
-  Character Reference = OFF by default
-  purpose = composition, environment, action, cheap scene drafts
+selected_media
+media_candidates[]
+```
+
+New generations are appended to `media_candidates` and no longer overwrite an already selected image. The first image becomes selected only when the scene has no selection yet.
+
+The UI shows all candidates for the scene, including recovered older OpenAI/local PNG files already present in the project media directory. You can:
+
+```text
+Choose     -> make a candidate the selected scene image
+Remove     -> remove it from the gallery (the file remains on disk for now)
+```
+
+Stock search results are added to the candidate gallery when selected.
+
+Project loading/recovery scans both:
+
+```text
+scene-XXX-openai-*.png
+scene-XXX-local-*.png
+```
+
+so older generated frames that were previously overwritten in `selected_media` can become visible again.
+
+## Character Reference behavior
+
+Current FLUX Q2_K img2img follows Character Reference too strongly, so defaults remain:
+
+```text
+Local Fast / Local Quality
+  Character Reference = OFF
 
 OpenAI Final
-  provider = openai
-  Character Reference = ON by default when it exists
-  purpose = final frames and stronger character consistency
+  Character Reference = ON when available
 ```
 
-Each scene has a **Use Character Reference** checkbox, so either default can be overridden manually. The backend endpoint also accepts `provider=local|openai|auto` and `use_reference=true|false`.
-
-Mass actions are separated into **All draft local** and **All final OpenAI**. OpenAI final generation may incur API cost.
-
-A better local identity workflow can later replace img2img with IP-Adapter, PuLID, Flux Kontext/reference conditioning, or a character LoRA. Until then, reference-off local drafts avoid the current over-attachment problem.
-
-## Provider behavior
-
-TTS auto order:
-
-```text
-Piper local -> OpenAI TTS
-```
-
-Legacy image auto order:
-
-```text
-stable-diffusion.cpp local -> OpenAI Image
-```
-
-The explicit UI buttons bypass that ambiguity and select the requested provider directly.
+Each scene has a checkbox to override this manually.
 
 ## Recommended runtime layout
 
@@ -143,10 +156,10 @@ The explicit UI buttons bypass that ambiguity and select the requested provider 
 CPU:
   Piper TTS
   FFmpeg
-  FLUX text encoders
+  image text encoders where possible
 
 GPU:
   llama.cpp OR stable-diffusion.cpp
 ```
 
-On a 6 GB GPU, schedule llama.cpp and local image generation rather than expecting both models to remain fully resident in VRAM. A GPU resource manager is the next layer to automate stop/start of llama-server around local image jobs.
+On a 6 GB GPU, schedule llama.cpp and local image generation rather than keeping both resident. A GPU resource manager can automate stop/start of llama-server around local image jobs later.
