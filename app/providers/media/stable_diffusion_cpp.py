@@ -11,26 +11,72 @@ from app.schemas import MediaAsset
 class StableDiffusionCppProvider:
     name = "local_image"
 
+    def _shared_file(self, preferred: Path, fallback: Path) -> Path:
+        return preferred if str(preferred).strip() and preferred.is_file() else fallback
+
+    def profile_enabled(self, profile: str) -> bool:
+        profile = profile.strip().lower()
+        if profile == "quality":
+            model = settings.sd_cpp_quality_diffusion_model
+            vae = self._shared_file(settings.sd_cpp_quality_vae, settings.sd_cpp_vae)
+            clip_l = self._shared_file(settings.sd_cpp_quality_clip_l, settings.sd_cpp_clip_l)
+            t5xxl = self._shared_file(settings.sd_cpp_quality_t5xxl, settings.sd_cpp_t5xxl)
+        else:
+            model = settings.sd_cpp_diffusion_model
+            vae = settings.sd_cpp_vae
+            clip_l = settings.sd_cpp_clip_l
+            t5xxl = settings.sd_cpp_t5xxl
+        required = [settings.sd_cpp_bin, model, vae, clip_l, t5xxl]
+        return all(path.is_file() for path in required)
+
     @property
     def enabled(self) -> bool:
-        required = [
-            settings.sd_cpp_bin,
-            settings.sd_cpp_diffusion_model,
-            settings.sd_cpp_vae,
-            settings.sd_cpp_clip_l,
-            settings.sd_cpp_t5xxl,
-        ]
-        return all(path.is_file() for path in required)
+        return self.profile_enabled("fast")
+
+    @property
+    def quality_enabled(self) -> bool:
+        return self.profile_enabled("quality")
+
+    def _profile(self, profile: str):
+        profile = profile.strip().lower()
+        if profile == "quality":
+            if not self.quality_enabled:
+                raise RuntimeError(
+                    "Local quality image profile is not configured. Set "
+                    "SD_CPP_QUALITY_DIFFUSION_MODEL and any required encoder overrides."
+                )
+            return {
+                "name": "quality",
+                "model": settings.sd_cpp_quality_diffusion_model,
+                "vae": self._shared_file(settings.sd_cpp_quality_vae, settings.sd_cpp_vae),
+                "clip_l": self._shared_file(settings.sd_cpp_quality_clip_l, settings.sd_cpp_clip_l),
+                "t5xxl": self._shared_file(settings.sd_cpp_quality_t5xxl, settings.sd_cpp_t5xxl),
+                "steps": settings.sd_cpp_quality_steps,
+                "cfg_scale": settings.sd_cpp_quality_cfg_scale,
+                "sampling_method": settings.sd_cpp_quality_sampling_method,
+            }
+        if not self.enabled:
+            raise RuntimeError(
+                "Local fast image profile is not configured. Set SD_CPP_BIN, "
+                "SD_CPP_DIFFUSION_MODEL, SD_CPP_VAE, SD_CPP_CLIP_L and SD_CPP_T5XXL."
+            )
+        return {
+            "name": "fast",
+            "model": settings.sd_cpp_diffusion_model,
+            "vae": settings.sd_cpp_vae,
+            "clip_l": settings.sd_cpp_clip_l,
+            "t5xxl": settings.sd_cpp_t5xxl,
+            "steps": settings.sd_cpp_steps,
+            "cfg_scale": settings.sd_cpp_cfg_scale,
+            "sampling_method": settings.sd_cpp_sampling_method,
+        }
 
     def _dimensions(self, aspect_ratio: str) -> tuple[int, int]:
         return {
             "16:9": (settings.sd_cpp_width_16_9, settings.sd_cpp_height_16_9),
             "9:16": (settings.sd_cpp_width_9_16, settings.sd_cpp_height_9_16),
             "1:1": (settings.sd_cpp_width_1_1, settings.sd_cpp_height_1_1),
-        }.get(
-            aspect_ratio,
-            (settings.sd_cpp_width_16_9, settings.sd_cpp_height_16_9),
-        )
+        }.get(aspect_ratio, (settings.sd_cpp_width_16_9, settings.sd_cpp_height_16_9))
 
     async def generate(
         self,
@@ -41,67 +87,44 @@ class StableDiffusionCppProvider:
         scene_id: str,
         media_dir: Path,
         reference_path: Path | None = None,
+        profile: str = "fast",
     ) -> MediaAsset:
-        if not self.enabled:
-            raise RuntimeError(
-                "stable-diffusion.cpp is not configured. Set SD_CPP_BIN, "
-                "SD_CPP_DIFFUSION_MODEL, SD_CPP_VAE, SD_CPP_CLIP_L and SD_CPP_T5XXL."
-            )
-
+        p = self._profile(profile)
         width, height = self._dimensions(aspect_ratio)
         media_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"{scene_id}-local-{uuid4().hex[:8]}.png"
+        filename = f"{scene_id}-local-{p['name']}-{uuid4().hex[:8]}.png"
         output_path = media_dir / filename
 
         cmd = [
             str(settings.sd_cpp_bin),
-            "--diffusion-model",
-            str(settings.sd_cpp_diffusion_model),
-            "--vae",
-            str(settings.sd_cpp_vae),
-            "--clip_l",
-            str(settings.sd_cpp_clip_l),
-            "--t5xxl",
-            str(settings.sd_cpp_t5xxl),
-            "-p",
-            prompt,
-            "-W",
-            str(width),
-            "-H",
-            str(height),
-            "--steps",
-            str(settings.sd_cpp_steps),
-            "--cfg-scale",
-            str(settings.sd_cpp_cfg_scale),
-            "--sampling-method",
-            settings.sd_cpp_sampling_method,
+            "--diffusion-model", str(p["model"]),
+            "--vae", str(p["vae"]),
+            "--clip_l", str(p["clip_l"]),
+            "--t5xxl", str(p["t5xxl"]),
+            "-p", prompt,
+            "-W", str(width),
+            "-H", str(height),
+            "--steps", str(p["steps"]),
+            "--cfg-scale", str(p["cfg_scale"]),
+            "--sampling-method", str(p["sampling_method"]),
         ]
 
         backend = settings.sd_cpp_backend.strip()
         if backend:
             cmd.extend(["--backend", backend])
         elif settings.sd_cpp_clip_on_cpu:
-            # Compatibility with older configs. Newer sd-cli prefers --backend te=cpu.
             cmd.append("--clip-on-cpu")
-
         if settings.sd_cpp_offload_to_cpu:
             cmd.append("--offload-to-cpu")
-
         max_vram = settings.sd_cpp_max_vram.strip()
         if max_vram:
             cmd.extend(["--max-vram", max_vram])
-
         if settings.sd_cpp_diffusion_fa:
             cmd.append("--diffusion-fa")
-
         if settings.sd_cpp_threads > 0:
             cmd.extend(["-t", str(settings.sd_cpp_threads)])
-
-        # This is conservative img2img support for a project Character Reference.
-        # If the local model cannot handle it, IMAGE_PROVIDER=auto will fall back to OpenAI.
         if reference_path is not None and reference_path.is_file():
             cmd.extend(["-i", str(reference_path), "--strength", "0.45"])
-
         cmd.extend(["-o", str(output_path)])
         if settings.sd_cpp_verbose:
             cmd.append("-v")
@@ -113,8 +136,7 @@ class StableDiffusionCppProvider:
         )
         try:
             stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=settings.sd_cpp_timeout_seconds,
+                process.communicate(), timeout=settings.sd_cpp_timeout_seconds
             )
         except TimeoutError as exc:
             process.kill()
@@ -136,14 +158,14 @@ class StableDiffusionCppProvider:
             asset_id=filename,
             media_type="image",
             preview_url=local_url,
-            source_url=f"local://stable-diffusion.cpp/{settings.sd_cpp_diffusion_model.name}",
+            source_url=f"local://stable-diffusion.cpp/{p['model'].name}",
             download_url=local_url,
             width=width,
             height=height,
             duration_seconds=None,
             author="local",
             label=(
-                f"stable-diffusion.cpp · {settings.sd_cpp_diffusion_model.name} · "
+                f"stable-diffusion.cpp · {p['name']} · {p['model'].name} · "
                 f"{width}x{height} · {mode} · {scene_id}"
             ),
             local_path=f"media/{filename}",
