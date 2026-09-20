@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     pexels_api_key: str = ""
     pixabay_api_key: str = ""
 
-    # Image routing: auto | local | openai
+    # Image routing: auto | local | local_fast | local_quality | openai
     image_provider: str = "auto"
 
     openai_api_key: str = ""
@@ -28,15 +28,11 @@ class Settings(BaseSettings):
     openai_image_quality: str = "medium"
     openai_image_timeout_seconds: int = 180
 
-    # stable-diffusion.cpp / FLUX local image provider
+    # stable-diffusion.cpp shared runtime
     sd_cpp_bin: Path = Path("/opt/stable-diffusion.cpp/build/bin/sd-cli")
-    sd_cpp_diffusion_model: Path = Path("")
     sd_cpp_vae: Path = Path("")
     sd_cpp_clip_l: Path = Path("")
     sd_cpp_t5xxl: Path = Path("")
-    sd_cpp_steps: int = 4
-    sd_cpp_cfg_scale: float = 1.0
-    sd_cpp_sampling_method: str = "euler"
     sd_cpp_timeout_seconds: int = 600
     sd_cpp_backend: str = "all=cuda0,te=cpu"
     sd_cpp_max_vram: str = "-1"
@@ -44,6 +40,23 @@ class Settings(BaseSettings):
     sd_cpp_diffusion_fa: bool = True
     sd_cpp_offload_to_cpu: bool = True
     sd_cpp_verbose: bool = True
+
+    # Local FAST profile (current FLUX.1-schnell Q2_K)
+    sd_cpp_diffusion_model: Path = Path("")
+    sd_cpp_steps: int = 4
+    sd_cpp_cfg_scale: float = 1.0
+    sd_cpp_sampling_method: str = "euler"
+
+    # Local QUALITY profile. Leave model empty until a second model is installed.
+    sd_cpp_quality_diffusion_model: Path = Path("")
+    sd_cpp_quality_steps: int = 8
+    sd_cpp_quality_cfg_scale: float = 1.0
+    sd_cpp_quality_sampling_method: str = "euler"
+
+    # Optional per-quality-profile encoder overrides. Empty = reuse shared files above.
+    sd_cpp_quality_vae: Path = Path("")
+    sd_cpp_quality_clip_l: Path = Path("")
+    sd_cpp_quality_t5xxl: Path = Path("")
 
     # Legacy compatibility. Ignored when SD_CPP_BACKEND is set.
     sd_cpp_clip_on_cpu: bool = True
