@@ -55,6 +55,13 @@ class ModelOrchestrator:
     async def ensure_llm_running(self) -> None:
         if not self.enabled:
             return
+
+        # If an image job currently owns the GPU, an incoming LLM request waits
+        # until the image finishes and the orchestrator has restarted llama-server.
+        if self._gpu_lock.locked() and self._current_job.startswith("image:"):
+            async with self._gpu_lock:
+                pass
+
         if await self.llm_active():
             try:
                 await self._wait_llm_http(3)
@@ -101,7 +108,6 @@ class ModelOrchestrator:
 
     @asynccontextmanager
     async def llm_slot(self):
-        """Keep an LLM request and an image job from overlapping on the GPU."""
         if not self.enabled:
             yield
             return
@@ -117,7 +123,6 @@ class ModelOrchestrator:
 
     @asynccontextmanager
     async def local_image_slot(self, profile: str):
-        """Serialize local image jobs and temporarily release llama.cpp VRAM."""
         if not self.enabled:
             yield
             return
@@ -131,6 +136,8 @@ class ModelOrchestrator:
             finally:
                 try:
                     if settings.llm_restart_after_image and llm_was_active:
+                        self._current_job = "llm:restart"
+                        self._write_lock_file(self._current_job)
                         await self.ensure_llm_running()
                 finally:
                     self._current_job = "idle"
