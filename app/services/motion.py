@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import shlex
 import tempfile
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -19,20 +19,21 @@ class MotionGenerationError(RuntimeError):
 
 
 class MotionService:
-    """Generate image-to-video clips through a configurable local command.
+    """Generate image-to-video clips through a configurable local command."""
 
-    The command is intentionally model-agnostic so VideoGen can use a local
-    LTX/ComfyUI/custom runner now or a different model after a GPU upgrade.
-    The configured command receives file paths rather than raw prompt text.
-
-    Supported placeholders in MOTION_COMMAND:
-      {input}       selected source image
-      {output}      target MP4 path
-      {prompt_file} UTF-8 text file containing the motion prompt
-      {duration}    requested seconds
-      {width}       target width
-      {height}      target height
-    """
+    def __init__(self) -> None:
+        self._runtime: dict = {
+            "state": "idle",
+            "stage": "idle",
+            "detail": "Motion worker is idle.",
+            "project_id": None,
+            "scene_id": None,
+            "pid": None,
+            "started_monotonic": None,
+            "elapsed_seconds": 0.0,
+            "output": None,
+            "error": None,
+        }
 
     @property
     def provider(self) -> str:
@@ -42,6 +43,17 @@ class MotionService:
     def enabled(self) -> bool:
         return self.provider == "command" and bool(settings.motion_command.strip())
 
+    def _set_runtime(self, **updates) -> None:
+        self._runtime.update(updates)
+        started = self._runtime.get("started_monotonic")
+        self._runtime["elapsed_seconds"] = round(time.monotonic() - started, 1) if started else 0.0
+
+    def runtime_status(self) -> dict:
+        result = dict(self._runtime)
+        started = result.pop("started_monotonic", None)
+        result["elapsed_seconds"] = round(time.monotonic() - started, 1) if started else float(result.get("elapsed_seconds") or 0.0)
+        return result
+
     def status(self) -> dict:
         return {
             "enabled": self.enabled,
@@ -50,6 +62,7 @@ class MotionService:
             "default_duration_seconds": settings.motion_default_duration_seconds,
             "max_duration_seconds": settings.motion_max_duration_seconds,
             "gpu_orchestration": model_orchestrator.enabled,
+            "runtime": self.runtime_status(),
             "note": (
                 "Local image-to-video command provider is ready."
                 if self.enabled
@@ -104,6 +117,19 @@ class MotionService:
         filename = f"{scene.id}-motion-{token}.mp4"
         output = (project_store.media_dir(project.id) / filename).resolve()
         prompt = self._prompt(project, scene)
+        started = time.monotonic()
+        self._runtime = {
+            "state": "running",
+            "stage": "queued",
+            "detail": "Waiting for exclusive GPU access.",
+            "project_id": project.id,
+            "scene_id": scene.id,
+            "pid": None,
+            "started_monotonic": started,
+            "elapsed_seconds": 0.0,
+            "output": filename,
+            "error": None,
+        }
 
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".txt", delete=False) as handle:
             handle.write(prompt)
@@ -122,11 +148,21 @@ class MotionService:
             if not cmd:
                 raise MotionGenerationError("MOTION_COMMAND is empty after formatting")
 
+            self._set_runtime(stage="gpu_prepare", detail="Stopping llama-server and freeing VRAM.")
             async with model_orchestrator.local_motion_slot():
+                self._set_runtime(
+                    stage="model_start",
+                    detail=f"Starting image-to-video runner ({width}x{height}, requested {duration:.1f}s).",
+                )
                 process = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                )
+                self._set_runtime(
+                    stage="generating",
+                    detail="Motion model is loading/generating frames. First run may also download model files.",
+                    pid=process.pid,
                 )
                 try:
                     stdout, stderr = await asyncio.wait_for(
@@ -145,12 +181,25 @@ class MotionService:
                     )
                 if not output.is_file() or output.stat().st_size == 0:
                     raise MotionGenerationError("Motion provider finished without creating the MP4 output")
+
+                self._set_runtime(stage="finalizing", detail="MP4 created. Probing duration and preparing scene asset.")
+
+            self._set_runtime(stage="llm_restored", detail="GPU job finished; llama-server has been restored.")
+        except Exception as exc:
+            self._set_runtime(
+                state="error",
+                stage="error",
+                detail="Motion generation failed.",
+                error=str(exc),
+                pid=None,
+            )
+            raise
         finally:
             prompt_path.unlink(missing_ok=True)
 
         actual_duration = probe_duration(output) or duration
         local_url = f"/api/projects/{project.id}/media/{filename}"
-        return MediaAsset(
+        asset = MediaAsset(
             provider="local_motion",
             asset_id=filename,
             media_type="video",
@@ -164,6 +213,15 @@ class MotionService:
             label=f"AI motion · {scene.id} · {actual_duration:.1f}s",
             local_path=f"media/{filename}",
         )
+        self._set_runtime(
+            state="complete",
+            stage="complete",
+            detail=f"Motion clip ready: {filename}",
+            output=filename,
+            pid=None,
+            error=None,
+        )
+        return asset
 
 
 motion_service = MotionService()
