@@ -24,6 +24,14 @@ class StableDiffusionCppProvider:
             t5xxl = self._shared_file(settings.sd_cpp_quality_t5xxl, settings.sd_cpp_t5xxl)
             text_encoder_ok = llm.is_file() or (clip_l.is_file() and t5xxl.is_file())
             return settings.sd_cpp_bin.is_file() and model.is_file() and vae.is_file() and text_encoder_ok
+        if profile == "next":
+            model = settings.sd_cpp_next_diffusion_model
+            vae = self._shared_file(settings.sd_cpp_next_vae, settings.sd_cpp_vae)
+            llm = settings.sd_cpp_next_llm
+            clip_l = self._shared_file(settings.sd_cpp_next_clip_l, settings.sd_cpp_clip_l)
+            t5xxl = self._shared_file(settings.sd_cpp_next_t5xxl, settings.sd_cpp_t5xxl)
+            text_encoder_ok = llm.is_file() or (clip_l.is_file() and t5xxl.is_file())
+            return settings.sd_cpp_bin.is_file() and model.is_file() and vae.is_file() and text_encoder_ok
         required = [
             settings.sd_cpp_bin,
             settings.sd_cpp_diffusion_model,
@@ -40,6 +48,10 @@ class StableDiffusionCppProvider:
     @property
     def quality_enabled(self) -> bool:
         return self.profile_enabled("quality")
+
+    @property
+    def next_enabled(self) -> bool:
+        return self.profile_enabled("next")
 
     def _profile(self, profile: str):
         profile = profile.strip().lower()
@@ -61,6 +73,25 @@ class StableDiffusionCppProvider:
                 "steps": settings.sd_cpp_quality_steps,
                 "cfg_scale": settings.sd_cpp_quality_cfg_scale,
                 "sampling_method": settings.sd_cpp_quality_sampling_method,
+            }
+        if profile == "next":
+            if not self.next_enabled:
+                raise RuntimeError(
+                    "Local next image profile is not configured. Set "
+                    "SD_CPP_NEXT_DIFFUSION_MODEL plus VAE and either "
+                    "SD_CPP_NEXT_LLM or CLIP/T5 encoders."
+                )
+            llm = settings.sd_cpp_next_llm if settings.sd_cpp_next_llm.is_file() else None
+            return {
+                "name": "next",
+                "model": settings.sd_cpp_next_diffusion_model,
+                "vae": self._shared_file(settings.sd_cpp_next_vae, settings.sd_cpp_vae),
+                "clip_l": self._shared_file(settings.sd_cpp_next_clip_l, settings.sd_cpp_clip_l),
+                "t5xxl": self._shared_file(settings.sd_cpp_next_t5xxl, settings.sd_cpp_t5xxl),
+                "llm": llm,
+                "steps": settings.sd_cpp_next_steps,
+                "cfg_scale": settings.sd_cpp_next_cfg_scale,
+                "sampling_method": settings.sd_cpp_next_sampling_method,
             }
         if not self.enabled:
             raise RuntimeError(
@@ -136,8 +167,14 @@ class StableDiffusionCppProvider:
             cmd.append("--diffusion-fa")
         if settings.sd_cpp_threads > 0:
             cmd.extend(["-t", str(settings.sd_cpp_threads)])
+
         if reference_path is not None and reference_path.is_file():
-            cmd.extend(["-i", str(reference_path), "--strength", "0.45"])
+            # FLUX.2 supports reference images natively with -r. Older local profiles use img2img.
+            if p["name"] == "next":
+                cmd.extend(["-r", str(reference_path)])
+            else:
+                cmd.extend(["-i", str(reference_path), "--strength", "0.45"])
+
         cmd.extend(["-o", str(output_path)])
         if settings.sd_cpp_verbose:
             cmd.append("-v")
@@ -165,7 +202,12 @@ class StableDiffusionCppProvider:
             raise RuntimeError("stable-diffusion.cpp did not create an image")
 
         local_url = f"/api/projects/{project_id}/media/{filename}"
-        mode = "img2img reference" if reference_path is not None else "text-to-image"
+        if reference_path is None:
+            mode = "text-to-image"
+        elif p["name"] == "next":
+            mode = "native reference"
+        else:
+            mode = "img2img reference"
         encoder = p["llm"].name if p["llm"] is not None else "clip_l+t5xxl"
         return MediaAsset(
             provider=self.name,
