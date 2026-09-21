@@ -8,6 +8,12 @@ import sys
 from pathlib import Path
 
 
+HYPERFRAMES_NPX_PACKAGE = os.environ.get(
+    "VIDEOGEN_HYPERFRAMES_NPX_PACKAGE",
+    "hyperframes@0.8.58",
+)
+
+
 def _json_result(payload: dict) -> None:
     print(json.dumps(payload, ensure_ascii=False))
 
@@ -29,24 +35,34 @@ def _tool_result(result) -> dict:
     }
 
 
-def _hyperframes_compat_probe() -> dict:
-    """Work around HyperFrames doctor returning non-zero for optional tools.
+def _patch_hyperframes_package() -> None:
+    """Make OpenMontage use the exact npx package spec that is known to work.
 
-    HyperFrames 0.8.58 reports ok=false when whisper/Kokoro/MusicGen are absent,
-    even though those checks are explicitly optional and the render runtime itself
-    is healthy. OpenMontage currently treats any non-zero doctor exit as a hard
-    runtime failure. Accept the doctor result when every failed check is optional,
-    and prime OpenMontage's process-local CLI probe cache accordingly.
+    On this host `npx --yes hyperframes doctor --json` can hit a stale/broken
+    unversioned cache entry with a non-executable bin, while
+    `npx --yes hyperframes@0.8.58 ...` works. HyperFramesCompose builds all CLI
+    calls from `_NPM_PACKAGE`, so patching the package spec fixes doctor/check/render
+    consistently for this helper process without modifying the OpenMontage checkout.
     """
     from tools.video.hyperframes_compose import HyperFramesCompose
 
+    HyperFramesCompose._NPM_PACKAGE = HYPERFRAMES_NPX_PACKAGE
+    HyperFramesCompose._npm_resolve_cache = None
+    HyperFramesCompose._cli_probe_cache = None
+
+
+def _hyperframes_compat_probe() -> dict:
+    """Accept HyperFrames when only explicitly optional doctor checks fail."""
+    from tools.video.hyperframes_compose import HyperFramesCompose
+
+    _patch_hyperframes_package()
     npx = shutil.which("npx")
     if not npx:
         return {"accepted": False, "reason": "npx not found"}
 
     try:
         proc = subprocess.run(
-            [npx, "--yes", "hyperframes", "doctor", "--json"],
+            [npx, "--yes", HYPERFRAMES_NPX_PACKAGE, "doctor", "--json"],
             capture_output=True,
             text=True,
             timeout=60,
@@ -61,6 +77,7 @@ def _hyperframes_compat_probe() -> dict:
         return {
             "accepted": False,
             "reason": (proc.stderr or raw or f"doctor exit {proc.returncode}")[-1000:],
+            "package": HYPERFRAMES_NPX_PACKAGE,
         }
 
     checks = payload.get("checks") or []
@@ -72,8 +89,6 @@ def _hyperframes_compat_probe() -> dict:
 
     accepted = not required_failed
     if accepted:
-        # HyperFramesCompose._runtime_check() consults this cache before invoking
-        # its stricter probe. Mark the CLI usable for this helper process only.
         HyperFramesCompose._cli_probe_cache = {"status": "ok"}
 
     return {
@@ -83,6 +98,7 @@ def _hyperframes_compat_probe() -> dict:
         "optional_failures": [c.get("name") for c in failed if c not in required_failed],
         "required_failures": [c.get("name") for c in required_failed],
         "version": (payload.get("_meta") or {}).get("version"),
+        "package": HYPERFRAMES_NPX_PACKAGE,
     }
 
 
@@ -91,11 +107,29 @@ def status() -> int:
     compat = _hyperframes_compat_probe()
     from tools.video.video_compose import VideoCompose
 
+    # VideoCompose instantiates HyperFramesCompose internally. Keep the package
+    # patch active before asking it to report render engine availability.
+    _patch_hyperframes_package()
+    if compat.get("accepted"):
+        from tools.video.hyperframes_compose import HyperFramesCompose
+        HyperFramesCompose._cli_probe_cache = {"status": "ok"}
+
     info = VideoCompose().get_info()
+    engines = dict(info.get("render_engines", {}))
+    runtimes = dict(info.get("render_runtimes", {}))
+    if compat.get("accepted"):
+        engines["hyperframes"] = True
+        runtimes["hyperframes"] = True
+
     _json_result({
-        "render_engines": info.get("render_engines", {}),
-        "render_runtimes": info.get("render_runtimes", {}),
-        "hyperframes_note": info.get("hyperframes_note"),
+        "render_engines": engines,
+        "render_runtimes": runtimes,
+        "hyperframes_note": (
+            "HyperFrames is available through VideoGen compatibility mode using "
+            f"{HYPERFRAMES_NPX_PACKAGE}. Optional doctor components may be absent."
+            if compat.get("accepted")
+            else info.get("hyperframes_note")
+        ),
         "remotion_note": info.get("remotion_note"),
         "hyperframes_compat": compat,
     })
@@ -116,6 +150,8 @@ def render(job: dict) -> int:
 
         from tools.video.hyperframes_compose import HyperFramesCompose
 
+        _patch_hyperframes_package()
+        HyperFramesCompose._cli_probe_cache = {"status": "ok"}
         tool = HyperFramesCompose()
         result = tool.execute({
             "operation": "render",
