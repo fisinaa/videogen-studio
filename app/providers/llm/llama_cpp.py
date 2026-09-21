@@ -100,6 +100,27 @@ watermarks, extra characters, anatomy errors and scene-specific mistakes.
 """
 
 
+VISUAL_REPAIR_SYSTEM_PROMPT = """You repair one visual prompt for an image-generation pipeline.
+Do NOT use JSON or markdown. Output EXACTLY four lines and nothing else:
+VISUAL_RU: <detailed Russian description of the exact visible frame>
+VISUAL_EN: <70-160 word detailed English production prompt>
+NEGATIVE: <short English negative prompt>
+SEARCH: <short English stock-media search query>
+
+VISUAL_EN must explicitly cover subject and stable traits, visible action, environment,
+important props and their spatial relationship, camera/framing/composition, lighting,
+mood and visual style. Do not invent extra characters.
+"""
+
+
+PLAIN_VISUAL_SYSTEM_PROMPT = """Write ONE production-ready English image-generation prompt only.
+No label, no JSON, no markdown, no explanation. Use 70-160 words. Explicitly describe
+the subject and stable traits, visible action, environment, key props and spatial
+relationships, camera/framing/composition, lighting, mood and visual style. Do not
+invent extra characters or text inside the image.
+"""
+
+
 def _scene_durations(total_seconds: int, scene_count: int) -> list[float]:
     scene_count = max(1, scene_count)
     base = total_seconds // scene_count
@@ -173,26 +194,69 @@ def _parse_outline_text(content: str, target_scene_count: int, target_duration: 
     }
 
 
+def _normalize_field_key(key: str) -> str:
+    normalized = re.sub(r"[^A-Z0-9]+", "_", key.strip().upper()).strip("_")
+    aliases = {
+        "VISUAL_PROMPT": "VISUAL",
+        "VISUAL_PROMPT_RU": "VISUAL_RU",
+        "RUSSIAN_VISUAL": "VISUAL_RU",
+        "RUSSIAN_PROMPT": "VISUAL_RU",
+        "PROMPT_RU": "VISUAL_RU",
+        "VISUAL_PROMPT_EN": "VISUAL_EN",
+        "ENGLISH_VISUAL": "VISUAL_EN",
+        "ENGLISH_PROMPT": "VISUAL_EN",
+        "PROMPT_EN": "VISUAL_EN",
+        "IMAGE_PROMPT": "VISUAL_EN",
+        "IMAGE_PROMPT_EN": "VISUAL_EN",
+        "NEGATIVE_PROMPT": "NEGATIVE",
+        "NEGATIVE_PROMPT_EN": "NEGATIVE",
+        "MEDIA_SEARCH": "SEARCH",
+        "SEARCH_QUERY": "SEARCH",
+        "MEDIA_SEARCH_QUERY": "SEARCH",
+    }
+    return aliases.get(normalized, normalized)
+
+
 def _extract_block_fields(content: str, scene_id: str) -> dict[str, str]:
+    """Parse the line DSL tolerantly.
+
+    Small local models sometimes omit the scene wrapper, spell labels as
+    `VISUAL EN`, or wrap long prompt values onto following lines. We accept all of
+    those while still returning the canonical field names used by VideoGen.
+    """
     pattern = re.compile(
         rf"\[{re.escape(scene_id)}\](.*?)\[/{re.escape(scene_id)}\]",
         re.IGNORECASE | re.DOTALL,
     )
     match = pattern.search(content)
-    block = match.group(1) if match else ""
+    block = match.group(1) if match else content
     fields: dict[str, str] = {}
     valid = {
         "NARRATION", "DIALOGUE", "ACTION", "VISUAL", "VISUAL_RU",
         "VISUAL_EN", "NEGATIVE", "SEARCH",
     }
+    current_key: str | None = None
+
     for raw_line in block.splitlines():
-        line = raw_line.strip()
-        if not line or ":" not in line:
+        line = raw_line.strip().strip("` ")
+        if not line or re.fullmatch(r"\[/?[^\]]+\]", line):
             continue
-        key, value = line.split(":", 1)
-        key = key.strip().upper()
-        if key in valid:
-            fields[key] = value.strip()
+
+        if ":" in line:
+            raw_key, value = line.split(":", 1)
+            key = _normalize_field_key(raw_key)
+            if key in valid:
+                current_key = key
+                value = value.strip()
+                if value:
+                    fields[key] = value
+                elif key not in fields:
+                    fields[key] = ""
+                continue
+
+        if current_key:
+            fields[current_key] = (fields.get(current_key, "") + " " + line).strip()
+
     return fields
 
 
@@ -239,23 +303,24 @@ class LlamaCppProvider(LLMProvider):
         return headers
 
     async def _chat(self, messages: list[dict], max_tokens: int, temperature: float) -> str:
-        await model_orchestrator.ensure_llm_running()
-        payload = {
-            "model": settings.llm_model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
-        timeout = httpx.Timeout(settings.llm_timeout_seconds)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(
-                settings.llm_base_url.rstrip("/") + "/chat/completions",
-                headers=self._headers(),
-                json=payload,
-            )
-            response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
+        async with model_orchestrator.llm_slot():
+            await model_orchestrator.ensure_llm_running()
+            payload = {
+                "model": settings.llm_model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            timeout = httpx.Timeout(settings.llm_timeout_seconds)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(
+                    settings.llm_base_url.rstrip("/") + "/chat/completions",
+                    headers=self._headers(),
+                    json=payload,
+                )
+                response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
 
     async def _create_outline(self, request: CreateProjectRequest) -> dict:
         target_scene_count = max(1, round(request.duration_seconds / 10))
@@ -322,8 +387,8 @@ class LlamaCppProvider(LLMProvider):
             item.pop("_raw_fields", None)
         return parsed
 
-    async def rebuild_visual_prompt(self, storyboard: Storyboard, scene: Scene) -> Scene:
-        prompt = (
+    def _visual_context(self, storyboard: Storyboard, scene: Scene) -> str:
+        return (
             f"Project title: {storyboard.title}\n"
             f"Logline: {storyboard.logline}\n"
             f"Visual style: {storyboard.visual_style}\n"
@@ -333,8 +398,13 @@ class LlamaCppProvider(LLMProvider):
             f"Visible action: {scene.action}\n"
             f"Narration: {scene.narration}\n"
             f"Dialogue: {' | '.join(scene.dialogue) if scene.dialogue else 'NONE'}\n"
-            f"Current visual prompt: {scene.visual_prompt_en or scene.visual_prompt}\n\n"
-            "Rebuild only the visual-generation prompt. Keep the story facts and canonical character traits. "
+            f"Current visual prompt: {scene.visual_prompt_en or scene.visual_prompt}\n"
+        )
+
+    async def rebuild_visual_prompt(self, storyboard: Storyboard, scene: Scene) -> Scene:
+        context = self._visual_context(storyboard, scene)
+        prompt = context + (
+            "\nRebuild only the visual-generation prompt. Keep the story facts and canonical character traits. "
             "Be specific enough that a local image model does not need to invent the composition."
         )
         content = await self._chat(
@@ -347,8 +417,42 @@ class LlamaCppProvider(LLMProvider):
         )
         fields = _extract_block_fields(content, scene.id)
         visual_en = fields.get("VISUAL_EN") or fields.get("VISUAL")
+
+        # Qwen 8B is good enough for prompt writing but occasionally ignores the
+        # requested wrapper/label format. Retry once with a much simpler 4-line DSL.
         if not visual_en:
-            raise ValueError("Prompt builder returned no VISUAL_EN field")
+            repair_content = await self._chat(
+                messages=[
+                    {"role": "system", "content": VISUAL_REPAIR_SYSTEM_PROMPT},
+                    {"role": "user", "content": context},
+                ],
+                max_tokens=850,
+                temperature=0.2,
+            )
+            repair_fields = _extract_block_fields(repair_content, scene.id)
+            if repair_fields:
+                fields.update({key: value for key, value in repair_fields.items() if value})
+            visual_en = fields.get("VISUAL_EN") or fields.get("VISUAL")
+
+        # Last-resort LLM fallback: ask for raw English prompt only. This keeps the
+        # UI usable even when the small model refuses every requested line label.
+        if not visual_en:
+            plain = await self._chat(
+                messages=[
+                    {"role": "system", "content": PLAIN_VISUAL_SYSTEM_PROMPT},
+                    {"role": "user", "content": context},
+                ],
+                max_tokens=650,
+                temperature=0.2,
+            )
+            visual_en = plain.strip().strip("` ").strip()
+
+        if not visual_en:
+            # Never destroy the existing prompt merely because formatting failed.
+            visual_en = scene.visual_prompt_en or scene.visual_prompt
+        if not visual_en:
+            raise ValueError("Prompt builder returned an empty visual prompt after retries")
+
         return scene.model_copy(update={
             "visual_prompt": visual_en,
             "visual_prompt_ru": fields.get("VISUAL_RU", scene.visual_prompt_ru),
