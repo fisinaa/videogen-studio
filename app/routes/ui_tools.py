@@ -56,17 +56,145 @@ async def videogen_enhancements_js():
       generate.textContent = 'Сгенерировать картинку';
       generate.style.background = '#2d7651';
       generate.addEventListener('click', () => {
-        const target = {
-          fast,
-          quality,
-          next,
-          openai,
-        }[select.value];
+        const target = {fast, quality, next, openai}[select.value];
         if (target && !target.disabled) target.click();
       });
 
       group.append(select, generate);
       actions.insertBefore(group, fast);
+    });
+  }
+
+  async function fetchMotionState(sceneId) {
+    const id = projectId();
+    if (!id) throw new Error('Не удалось определить ID проекта');
+    const response = await fetch(`/api/motion/projects/${encodeURIComponent(id)}/scenes/${encodeURIComponent(sceneId)}`, {cache:'no-store'});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `motion HTTP ${response.status}`);
+    return data;
+  }
+
+  function motionCandidateHtml(asset, selectedId) {
+    const selected = asset.asset_id === selectedId;
+    const url = asset.preview_url || asset.download_url || '';
+    return `<div class="motion-candidate" data-motion-id="${esc(asset.asset_id)}" style="border:1px solid ${selected ? '#58a66b' : '#2a3140'};border-radius:10px;padding:9px;background:#0b0d12">
+      ${selected ? '<div style="font-size:11px;color:#8ee59a;font-weight:700;margin-bottom:6px">ВЫБРАНО</div>' : ''}
+      ${url ? `<video controls preload="metadata" src="${esc(url)}" style="width:100%;max-width:360px;border-radius:8px;background:#000"></video>` : ''}
+      <div class="muted" style="font-size:12px;margin-top:6px">${esc(asset.label || asset.asset_id)}</div>
+      <div style="display:flex;gap:6px;margin-top:7px">
+        <button type="button" class="motion-select" ${selected ? 'disabled' : ''} style="padding:7px 9px">Выбрать</button>
+        <button type="button" class="motion-delete danger" ${selected ? 'disabled' : ''} style="padding:7px 9px">Удалить</button>
+      </div>
+    </div>`;
+  }
+
+  async function hydrateMotionPanel(sceneEl) {
+    const sceneId = sceneEl.dataset.sceneId;
+    const panel = sceneEl.querySelector('.videogen-motion-panel');
+    if (!sceneId || !panel) return;
+    const stateEl = panel.querySelector('.motion-state');
+    const listEl = panel.querySelector('.motion-list');
+    const generateBtn = panel.querySelector('.motion-generate');
+    const resetBtn = panel.querySelector('.motion-reset');
+
+    try {
+      const data = await fetchMotionState(sceneId);
+      const provider = data.provider || {};
+      const selected = data.selected_motion_media;
+      const candidates = data.motion_candidates || [];
+      generateBtn.disabled = !provider.enabled;
+      generateBtn.title = provider.enabled ? 'Создать настоящий image-to-video MP4' : (provider.note || 'Motion provider не настроен');
+      resetBtn.disabled = data.motion_mode !== 'image_to_video';
+      stateEl.style.color = '';
+      stateEl.innerHTML = data.motion_mode === 'image_to_video' && selected
+        ? `<span style="color:#8ee59a">AI motion активен:</span> ${esc(selected.asset_id)}`
+        : `Режим: camera motion (pan/zoom). ${provider.enabled ? 'AI motion provider готов.' : esc(provider.note || '')}`;
+      listEl.innerHTML = candidates.length
+        ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:9px;margin-top:9px">${candidates.map(a => motionCandidateHtml(a, selected?.asset_id)).join('')}</div>`
+        : '<div class="muted" style="margin-top:7px">Motion-клипов пока нет.</div>';
+
+      listEl.querySelectorAll('.motion-select').forEach(button => button.addEventListener('click', async () => {
+        const card = button.closest('.motion-candidate');
+        await motionAction(sceneEl, `/api/motion/projects/${encodeURIComponent(projectId())}/scenes/${encodeURIComponent(sceneId)}/select/${encodeURIComponent(card.dataset.motionId)}`, 'POST', 'Выбираю motion-клип...');
+      }));
+      listEl.querySelectorAll('.motion-delete').forEach(button => button.addEventListener('click', async () => {
+        const card = button.closest('.motion-candidate');
+        await motionAction(sceneEl, `/api/motion/projects/${encodeURIComponent(projectId())}/scenes/${encodeURIComponent(sceneId)}/candidates/${encodeURIComponent(card.dataset.motionId)}`, 'DELETE', 'Удаляю motion-клип...');
+      }));
+    } catch (error) {
+      stateEl.textContent = `Motion: ${error.message || error}`;
+      stateEl.style.color = '#ff8d8d';
+      generateBtn.disabled = true;
+    }
+  }
+
+  async function motionAction(sceneEl, url, method, progressText) {
+    const panel = sceneEl.querySelector('.videogen-motion-panel');
+    const stateEl = panel.querySelector('.motion-state');
+    const buttons = panel.querySelectorAll('button');
+    buttons.forEach(b => { b.disabled = true; });
+    stateEl.style.color = '';
+    stateEl.textContent = progressText;
+    try {
+      const response = await fetch(url, {method});
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+      stateEl.style.color = '#8ee59a';
+      stateEl.textContent = 'Готово.';
+    } catch (error) {
+      stateEl.style.color = '#ff8d8d';
+      stateEl.textContent = `Ошибка: ${error.message || error}`;
+    } finally {
+      await hydrateMotionPanel(sceneEl);
+    }
+  }
+
+  function enhanceMotionControls() {
+    document.querySelectorAll('.scene-editor').forEach(sceneEl => {
+      if (sceneEl.dataset.motionUi === '1') return;
+      const actions = sceneEl.querySelector('.scene-actions');
+      const sceneId = sceneEl.dataset.sceneId;
+      if (!actions || !sceneId) return;
+      sceneEl.dataset.motionUi = '1';
+
+      const generate = document.createElement('button');
+      generate.type = 'button';
+      generate.className = 'motion-generate';
+      generate.textContent = 'Анимировать сцену';
+      generate.style.background = '#8b4f27';
+
+      const reset = document.createElement('button');
+      reset.type = 'button';
+      reset.className = 'motion-reset secondary';
+      reset.textContent = 'Использовать картинку';
+
+      actions.append(generate, reset);
+
+      const panel = document.createElement('div');
+      panel.className = 'videogen-motion-panel';
+      panel.style.cssText = 'margin:12px 0;padding:11px;border:1px solid #4c3828;border-radius:10px;background:#15100c;';
+      panel.innerHTML = '<b>AI Motion / image-to-video</b><div class="motion-state muted" style="margin-top:6px">Проверяю motion provider...</div><div class="motion-list"></div>';
+      const selectedMedia = sceneEl.querySelector('.selected-media-slot');
+      if (selectedMedia) selectedMedia.insertAdjacentElement('afterend', panel);
+      else sceneEl.appendChild(panel);
+
+      generate.addEventListener('click', async () => {
+        await motionAction(
+          sceneEl,
+          `/api/motion/projects/${encodeURIComponent(projectId())}/scenes/${encodeURIComponent(sceneId)}/generate`,
+          'POST',
+          'Генерация AI motion MP4... На локальной GPU это может занять много времени.'
+        );
+      });
+      reset.addEventListener('click', async () => {
+        await motionAction(
+          sceneEl,
+          `/api/motion/projects/${encodeURIComponent(projectId())}/scenes/${encodeURIComponent(sceneId)}/reset`,
+          'POST',
+          'Возвращаю сцену на картинку + camera motion...'
+        );
+      });
+      hydrateMotionPanel(sceneEl);
     });
   }
 
@@ -77,6 +205,7 @@ async def videogen_enhancements_js():
 
   function ensurePanel() {
     enhanceImageModelMenus();
+    enhanceMotionControls();
 
     const actions = document.querySelector('.project-actions');
     if (!actions || actions.querySelector('.videogen-render-main')) return;
@@ -192,6 +321,7 @@ async def videogen_enhancements_js():
   const observer = new MutationObserver(() => {
     ensurePanel();
     enhanceImageModelMenus();
+    enhanceMotionControls();
   });
   observer.observe(document.documentElement, {childList:true, subtree:true});
   ensurePanel();
