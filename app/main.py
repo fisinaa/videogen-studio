@@ -14,7 +14,7 @@ from app.schemas import CreateProjectRequest, MediaAsset, Project, SceneUpdate
 from app.storage import project_store
 
 
-app = FastAPI(title="VideoGen Studio", version="0.9.0")
+app = FastAPI(title="VideoGen Studio", version="0.10.0")
 templates = Jinja2Templates(directory="app/templates")
 llm = LlamaCppProvider()
 
@@ -192,7 +192,7 @@ async def get_project_media(project_id: str, filename: str):
 async def get_project_audio(project_id: str, filename: str):
     path = project_store.audio_file(project_id, filename)
     if path is None:
-        raise HTTPException(status_code=404, detail="Audio file not found")
+        raise HTTPException(status_code=404, detail="Media file not found")
     return FileResponse(path, headers={"Cache-Control": "no-store, max-age=0"})
 
 
@@ -310,7 +310,7 @@ async def search_scene_media(project_id: str, scene_id: str, query: str | None =
 async def generate_scene_ai_media(
     project_id: str,
     scene_id: str,
-    provider: str = Query(default="auto", pattern="^(auto|local|local_fast|local_quality|openai)$"),
+    provider: str = Query(default="auto", pattern="^(auto|local|local_fast|local_quality|local_next|openai)$"),
     use_reference: bool | None = Query(default=None),
 ):
     project = project_store.load(project_id)
