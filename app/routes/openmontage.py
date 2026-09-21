@@ -31,6 +31,24 @@ async def render_project(
         raise HTTPException(status_code=502, detail=f"OpenMontage render failed: {exc}") from exc
 
 
+@router.get("/projects/{project_id}/renders")
+async def list_renders(project_id: str):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    render_dir = project_store.render_dir(project_id)
+    items = []
+    for path in sorted(render_dir.glob("*.mp4"), key=lambda item: item.stat().st_mtime, reverse=True):
+        if not path.is_file():
+            continue
+        items.append({
+            "filename": path.name,
+            "size": path.stat().st_size,
+            "download_url": f"/api/openmontage/projects/{project_id}/renders/{path.name}",
+        })
+    return {"renders": items}
+
+
 @router.get("/projects/{project_id}/renders/{filename}")
 async def get_render(project_id: str, filename: str):
     path = project_store.render_file(project_id, filename)
