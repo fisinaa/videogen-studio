@@ -35,20 +35,43 @@ def _tool_result(result) -> dict:
     }
 
 
-def _patch_hyperframes_package() -> None:
-    """Make OpenMontage use the exact npx package spec that is known to work.
+def _pinned_run_hf(self, args, *, cwd, timeout, check):
+    """Run the known-working HyperFrames package spec for every CLI operation.
 
-    On this host `npx --yes hyperframes doctor --json` can hit a stale/broken
-    unversioned cache entry with a non-executable bin, while
-    `npx --yes hyperframes@0.8.58 ...` works. HyperFramesCompose builds all CLI
-    calls from `_NPM_PACKAGE`, so patching the package spec fixes doctor/check/render
-    consistently for this helper process without modifying the OpenMontage checkout.
+    OpenMontage 0.2.0 hardcodes `npx --yes hyperframes` inside `_run_hf`, so
+    changing `_NPM_PACKAGE` only fixes its availability probe; lint/validate/render
+    still hit the stale unversioned npx cache entry on this host. Override the
+    execution method for this helper process so every operation uses the same
+    package spec that passes doctor: `hyperframes@0.8.58`.
     """
+    npx = shutil.which("npx") or "npx"
+    cmd = [npx, "--yes", HYPERFRAMES_NPX_PACKAGE, *args]
+    try:
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=str(cwd) if cwd else None,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=124,
+            stdout=exc.stdout or "",
+            stderr=exc.stderr or f"hyperframes command timed out after {timeout}s",
+        )
+
+
+def _patch_hyperframes_package() -> None:
+    """Make OpenMontage use the exact HyperFrames package spec that works here."""
     from tools.video.hyperframes_compose import HyperFramesCompose
 
     HyperFramesCompose._NPM_PACKAGE = HYPERFRAMES_NPX_PACKAGE
     HyperFramesCompose._npm_resolve_cache = None
     HyperFramesCompose._cli_probe_cache = None
+    HyperFramesCompose._run_hf = _pinned_run_hf
 
 
 def _hyperframes_compat_probe() -> dict:
@@ -107,8 +130,6 @@ def status() -> int:
     compat = _hyperframes_compat_probe()
     from tools.video.video_compose import VideoCompose
 
-    # VideoCompose instantiates HyperFramesCompose internally. Keep the package
-    # patch active before asking it to report render engine availability.
     _patch_hyperframes_package()
     if compat.get("accepted"):
         from tools.video.hyperframes_compose import HyperFramesCompose
