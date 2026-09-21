@@ -1,0 +1,39 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse
+
+from app.integrations.openmontage import openmontage
+from app.storage import project_store
+
+
+router = APIRouter(prefix="/api/openmontage", tags=["openmontage"])
+
+
+@router.get("/status")
+async def openmontage_status():
+    return await openmontage.status()
+
+
+@router.post("/projects/{project_id}/render")
+async def render_project(
+    project_id: str,
+    runtime: str = Query(pattern="^(hyperframes|remotion)$"),
+):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        return await openmontage.render(project, runtime)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"OpenMontage render failed: {exc}") from exc
+
+
+@router.get("/projects/{project_id}/renders/{filename}")
+async def get_render(project_id: str, filename: str):
+    path = project_store.render_file(project_id, filename)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Render not found")
+    return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "no-store, max-age=0"})
