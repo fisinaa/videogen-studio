@@ -50,14 +50,11 @@ class Scene(BaseModel):
     narration: str = ""
     dialogue: list[str] = Field(default_factory=list)
     action: str
-
-    # Backward-compatible prompt field. New projects keep it equal to visual_prompt_en.
     visual_prompt: str
     visual_prompt_ru: str = ""
     visual_prompt_en: str = ""
     negative_prompt_en: str = ""
     media_search_query: str = ""
-
     selected_media: MediaAsset | None = None
     media_candidates: list[MediaAsset] = Field(default_factory=list)
     selected_audio: AudioAsset | None = None
@@ -70,9 +67,9 @@ class SceneUpdate(BaseModel):
     dialogue: list[str] = Field(default_factory=list)
     action: str = Field(min_length=1, max_length=10000)
     visual_prompt: str = Field(min_length=1, max_length=10000)
-    visual_prompt_ru: str = Field(default="", max_length=10000)
-    visual_prompt_en: str = Field(default="", max_length=10000)
-    negative_prompt_en: str = Field(default="", max_length=5000)
+    visual_prompt_ru: str | None = Field(default=None, max_length=10000)
+    visual_prompt_en: str | None = Field(default=None, max_length=10000)
+    negative_prompt_en: str | None = Field(default=None, max_length=5000)
     media_search_query: str = Field(default="", max_length=1000)
 
 
