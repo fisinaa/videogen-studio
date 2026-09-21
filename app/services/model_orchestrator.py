@@ -9,7 +9,7 @@ from app.config import settings
 
 
 class ModelOrchestrator:
-    """Coordinate llama-server and local image generation on one GPU."""
+    """Coordinate llama-server and local GPU generation on one GPU."""
 
     def __init__(self) -> None:
         self._gpu_lock = asyncio.Lock()
@@ -128,19 +128,14 @@ class ModelOrchestrator:
                 self._remove_lock_file()
 
     @asynccontextmanager
-    async def local_image_slot(self, profile: str):
+    async def _local_gpu_slot(self, job_name: str):
+        """Reserve the GPU for a local generation task and temporarily stop llama-server."""
         if not self.enabled:
             yield
             return
 
-        current = asyncio.current_task()
-        if self._image_batch_owner is current:
-            # The batch context already owns the GPU and has stopped llama-server.
-            yield
-            return
-
         async with self._gpu_lock:
-            self._current_job = f"image:{profile}"
+            self._current_job = job_name
             self._write_lock_file(self._current_job)
             llm_was_active = False
             try:
@@ -155,6 +150,26 @@ class ModelOrchestrator:
                 finally:
                     self._current_job = "idle"
                     self._remove_lock_file()
+
+    @asynccontextmanager
+    async def local_image_slot(self, profile: str):
+        if not self.enabled:
+            yield
+            return
+
+        current = asyncio.current_task()
+        if self._image_batch_owner is current:
+            yield
+            return
+
+        async with self._local_gpu_slot(f"image:{profile}"):
+            yield
+
+    @asynccontextmanager
+    async def local_motion_slot(self):
+        """Run a local image-to-video job with the GPU exclusively reserved."""
+        async with self._local_gpu_slot("motion:image-to-video"):
+            yield
 
     @asynccontextmanager
     async def local_image_batch(self, profile: str):
