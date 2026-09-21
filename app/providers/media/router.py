@@ -21,6 +21,7 @@ class MediaRouter:
         result[self.local_image.name] = self.local_image.enabled
         result["local_fast"] = self.local_image.enabled
         result["local_quality"] = self.local_image.quality_enabled
+        result["local_next"] = self.local_image.next_enabled
         result["image_selected"] = settings.image_provider
         return result
 
@@ -75,6 +76,16 @@ class MediaRouter:
                 reference_path=reference_path,
                 profile="quality",
             )
+        if mode == "local_next":
+            return await self.local_image.generate(
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                project_id=project_id,
+                scene_id=scene_id,
+                media_dir=media_dir,
+                reference_path=reference_path,
+                profile="next",
+            )
         if mode == "openai":
             return await self.openai_image.generate(
                 prompt=prompt,
@@ -88,9 +99,23 @@ class MediaRouter:
             raise ValueError(f"Unknown image provider mode: {mode}")
 
         errors: list[str] = []
-        for name, fn in (
+        for name, enabled, fn in (
+            (
+                "local_next",
+                self.local_image.next_enabled,
+                lambda: self.local_image.generate(
+                    prompt=prompt,
+                    aspect_ratio=aspect_ratio,
+                    project_id=project_id,
+                    scene_id=scene_id,
+                    media_dir=media_dir,
+                    reference_path=reference_path,
+                    profile="next",
+                ),
+            ),
             (
                 "local_quality",
+                self.local_image.quality_enabled,
                 lambda: self.local_image.generate(
                     prompt=prompt,
                     aspect_ratio=aspect_ratio,
@@ -103,6 +128,7 @@ class MediaRouter:
             ),
             (
                 "local_fast",
+                self.local_image.enabled,
                 lambda: self.local_image.generate(
                     prompt=prompt,
                     aspect_ratio=aspect_ratio,
@@ -115,6 +141,7 @@ class MediaRouter:
             ),
             (
                 "openai",
+                self.openai_image.enabled,
                 lambda: self.openai_image.generate(
                     prompt=prompt,
                     aspect_ratio=aspect_ratio,
@@ -126,11 +153,7 @@ class MediaRouter:
             ),
         ):
             try:
-                if name == "local_quality" and not self.local_image.quality_enabled:
-                    raise RuntimeError("disabled")
-                if name == "local_fast" and not self.local_image.enabled:
-                    raise RuntimeError("disabled")
-                if name == "openai" and not self.openai_image.enabled:
+                if not enabled:
                     raise RuntimeError("disabled")
                 return await fn()
             except Exception as exc:
