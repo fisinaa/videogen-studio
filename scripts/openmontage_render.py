@@ -36,14 +36,7 @@ def _tool_result(result) -> dict:
 
 
 def _pinned_run_hf(self, args, *, cwd, timeout, check):
-    """Run the known-working HyperFrames package spec for every CLI operation.
-
-    OpenMontage 0.2.0 hardcodes `npx --yes hyperframes` inside `_run_hf`, so
-    changing `_NPM_PACKAGE` only fixes its availability probe; lint/validate/render
-    still hit the stale unversioned npx cache entry on this host. Override the
-    execution method for this helper process so every operation uses the same
-    package spec that passes doctor: `hyperframes@0.8.58`.
-    """
+    """Run the known-working HyperFrames package spec for every CLI operation."""
     npx = shutil.which("npx") or "npx"
     cmd = [npx, "--yes", HYPERFRAMES_NPX_PACKAGE, *args]
     try:
@@ -64,6 +57,78 @@ def _pinned_run_hf(self, args, *, cwd, timeout, check):
         )
 
 
+def _videogen_cut_to_html(self, index, cut, width, height):
+    """VideoGen-specific HyperFrames image treatment with full-scene motion.
+
+    OpenMontage's current Phase-1 HyperFrames scaffold only gives still images a
+    short 0.5 second entrance tween. VideoGen already sends an `animation` hint per
+    scene, so turn that into deterministic GSAP camera movement across the entire
+    scene while preserving OpenMontage's native HTML contract.
+    """
+    cut_id = f"cut-{index}"
+    in_s = float(cut.get("in_seconds", 0) or 0)
+    out_s = float(cut.get("out_seconds", 0) or 0)
+    duration = max(0.1, out_s - in_s)
+    source = cut.get("source") or ""
+    cut_type = (cut.get("type") or "").lower()
+    text = cut.get("text") or cut.get("title") or ""
+    src_path = Path(source) if source else None
+    ext = src_path.suffix.lower() if src_path else ""
+
+    image_exts = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp", ".gif"}
+    if ext in image_exts and src_path:
+        rel = self._rel_from_workspace(str(src_path))
+        html = (
+            f'<img id="{cut_id}" class="clip image-clip" '
+            f'src="{self._escape_attr(rel)}" '
+            f'data-start="{self._f(in_s)}" data-duration="{self._f(duration)}" '
+            f'data-track-index="1" alt="">'
+        )
+        animation = str(cut.get("animation") or "ken-burns").lower()
+        start = self._f(in_s)
+        dur = self._f(duration)
+        target = f'"#{cut_id}"'
+
+        motions = {
+            "ken-burns": (
+                f'tl.fromTo({target}, {{ scale: 1.02, xPercent: -1.2, yPercent: 0.6, opacity: 0.001 }}, '
+                f'{{ scale: 1.12, xPercent: 1.2, yPercent: -0.6, opacity: 1, duration: {dur}, ease: "none" }}, {start});'
+            ),
+            "zoom-in": (
+                f'tl.fromTo({target}, {{ scale: 1.0, opacity: 0.001 }}, '
+                f'{{ scale: 1.14, opacity: 1, duration: {dur}, ease: "none" }}, {start});'
+            ),
+            "zoom-out": (
+                f'tl.fromTo({target}, {{ scale: 1.14, opacity: 0.001 }}, '
+                f'{{ scale: 1.02, opacity: 1, duration: {dur}, ease: "none" }}, {start});'
+            ),
+            "pan-left": (
+                f'tl.fromTo({target}, {{ scale: 1.10, xPercent: 2.8, opacity: 0.001 }}, '
+                f'{{ scale: 1.10, xPercent: -2.8, opacity: 1, duration: {dur}, ease: "none" }}, {start});'
+            ),
+            "pan-right": (
+                f'tl.fromTo({target}, {{ scale: 1.10, xPercent: -2.8, opacity: 0.001 }}, '
+                f'{{ scale: 1.10, xPercent: 2.8, opacity: 1, duration: {dur}, ease: "none" }}, {start});'
+            ),
+            "drift-up": (
+                f'tl.fromTo({target}, {{ scale: 1.08, yPercent: 2.3, opacity: 0.001 }}, '
+                f'{{ scale: 1.11, yPercent: -2.3, opacity: 1, duration: {dur}, ease: "none" }}, {start});'
+            ),
+            "drift-down": (
+                f'tl.fromTo({target}, {{ scale: 1.08, yPercent: -2.3, opacity: 0.001 }}, '
+                f'{{ scale: 1.11, yPercent: 2.3, opacity: 1, duration: {dur}, ease: "none" }}, {start});'
+            ),
+            "static": (
+                f'tl.fromTo({target}, {{ opacity: 0.001 }}, '
+                f'{{ opacity: 1, duration: 0.35, ease: "power2.out" }}, {start});'
+            ),
+        }
+        return html, motions.get(animation, motions["ken-burns"])
+
+    # Preserve OpenMontage's own handling for text/video/composition clips.
+    return self._videogen_original_cut_to_html(index, cut, width, height)
+
+
 def _patch_hyperframes_package() -> None:
     """Make OpenMontage use the exact HyperFrames package spec that works here."""
     from tools.video.hyperframes_compose import HyperFramesCompose
@@ -72,6 +137,13 @@ def _patch_hyperframes_package() -> None:
     HyperFramesCompose._npm_resolve_cache = None
     HyperFramesCompose._cli_probe_cache = None
     HyperFramesCompose._run_hf = _pinned_run_hf
+
+    # Patch only once per helper process. Keep a handle to OpenMontage's original
+    # implementation for non-image cuts and replace image behavior with full-scene
+    # motion driven by VideoGen's `animation` hint.
+    if not hasattr(HyperFramesCompose, "_videogen_original_cut_to_html"):
+        HyperFramesCompose._videogen_original_cut_to_html = HyperFramesCompose._cut_to_html
+        HyperFramesCompose._cut_to_html = _videogen_cut_to_html
 
 
 def _hyperframes_compat_probe() -> dict:
