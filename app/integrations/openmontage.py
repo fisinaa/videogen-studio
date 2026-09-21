@@ -143,6 +143,22 @@ class OpenMontageIntegration:
             ),
         }
 
+    @staticmethod
+    def _parse_helper_json(text: str) -> dict | None:
+        if not text:
+            return None
+        for line in reversed(text.splitlines()):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                return payload
+        return None
+
     async def _run_helper(self, action: str, payload: dict | None = None) -> dict:
         if not self.enabled:
             raise RuntimeError(
@@ -176,15 +192,28 @@ class OpenMontageIntegration:
             raise RuntimeError("OpenMontage render timed out") from exc
 
         text = stdout.decode("utf-8", errors="replace").strip()
+        err = stderr.decode("utf-8", errors="replace").strip()
+        parsed = self._parse_helper_json(text)
+
         if process.returncode != 0:
-            err = stderr.decode("utf-8", errors="replace").strip()
+            # The helper always prints the ToolResult JSON to stdout before exiting
+            # non-zero. OpenMontage may also log warnings to stderr; do not let a
+            # harmless warning hide the actual validation/render error.
+            if parsed is not None:
+                detail = str(parsed.get("error") or f"OpenMontage helper exited {process.returncode}")
+                data = parsed.get("data") or {}
+                if data:
+                    detail += "\nOpenMontage data: " + json.dumps(data, ensure_ascii=False)[:12000]
+                if err:
+                    detail += "\nOpenMontage log: " + err[-3000:]
+                raise RuntimeError(detail)
             raise RuntimeError(err or text or f"OpenMontage helper exited {process.returncode}")
+
+        if parsed is not None:
+            return parsed
         if not text:
             raise RuntimeError("OpenMontage helper returned empty output")
-        try:
-            return json.loads(text.splitlines()[-1])
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"OpenMontage helper returned invalid JSON: {text[-1500:]}") from exc
+        raise RuntimeError(f"OpenMontage helper returned invalid JSON: {text[-1500:]}")
 
     async def status(self) -> dict:
         base = {
