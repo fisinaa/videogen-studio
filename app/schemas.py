@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 ProjectType = Literal["reel", "video", "cartoon", "series_episode"]
 AspectRatio = Literal["9:16", "16:9", "1:1"]
 MediaType = Literal["video", "image"]
+MotionMode = Literal["static", "camera_motion", "image_to_video"]
 
 
 class CreateProjectRequest(BaseModel):
@@ -58,6 +59,13 @@ class Scene(BaseModel):
     selected_media: MediaAsset | None = None
     media_candidates: list[MediaAsset] = Field(default_factory=list)
     selected_audio: AudioAsset | None = None
+    audio_duration_seconds: float | None = None
+    final_duration_seconds: float | None = None
+    subtitle_text: str = ""
+    subtitle_enabled: bool = True
+    motion_mode: MotionMode = "camera_motion"
+    motion_candidates: list[MediaAsset] = Field(default_factory=list)
+    selected_motion_media: MediaAsset | None = None
 
 
 class SceneUpdate(BaseModel):
