@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 import httpx
 
@@ -10,12 +9,7 @@ from app.config import settings
 
 
 class ModelOrchestrator:
-    """Coordinate the GPU between llama-server and local image generation.
-
-    The orchestrator deliberately controls llama-server through a fixed user-level
-    systemd unit name instead of arbitrary shell commands from .env. This keeps the
-    start/stop path predictable and avoids shell command injection.
-    """
+    """Coordinate llama-server and local image generation on one GPU."""
 
     def __init__(self) -> None:
         self._gpu_lock = asyncio.Lock()
@@ -75,7 +69,6 @@ class ModelOrchestrator:
         await self._wait_llm_http(settings.llm_start_timeout_seconds)
 
     async def stop_llm(self) -> bool:
-        """Stop llama-server and return whether it was active before the stop."""
         if not self.enabled:
             return False
         was_active = await self.llm_active()
@@ -92,8 +85,7 @@ class ModelOrchestrator:
                 return True
             await asyncio.sleep(0.5)
         raise RuntimeError(
-            f"{settings.llm_systemd_unit} did not stop within "
-            f"{settings.llm_stop_timeout_seconds}s"
+            f"{settings.llm_systemd_unit} did not stop within {settings.llm_stop_timeout_seconds}s"
         )
 
     def _write_lock_file(self, value: str) -> None:
@@ -108,8 +100,27 @@ class ModelOrchestrator:
             pass
 
     @asynccontextmanager
+    async def llm_slot(self):
+        """Keep an LLM request and an image job from overlapping on the GPU."""
+        if not self.enabled:
+            yield
+            return
+        async with self._gpu_lock:
+            self._current_job = "llm"
+            self._write_lock_file(self._current_job)
+            try:
+                await self.ensure_llm_running()
+                yield
+            finally:
+                self._current_job = "idle"
+                self._remove_lock_file()
+
+    @asynccontextmanager
     async def local_image_slot(self, profile: str):
-        """Serialize image jobs and temporarily release llama.cpp VRAM."""
+        """Serialize local image jobs and temporarily release llama.cpp VRAM."""
+        if not self.enabled:
+            yield
+            return
         async with self._gpu_lock:
             self._current_job = f"image:{profile}"
             self._write_lock_file(self._current_job)
@@ -119,11 +130,7 @@ class ModelOrchestrator:
                 yield
             finally:
                 try:
-                    if (
-                        self.enabled
-                        and settings.llm_restart_after_image
-                        and llm_was_active
-                    ):
+                    if settings.llm_restart_after_image and llm_was_active:
                         await self.ensure_llm_running()
                 finally:
                     self._current_job = "idle"
