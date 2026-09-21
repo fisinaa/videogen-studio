@@ -104,6 +104,12 @@ class Settings(BaseSettings):
     piper_speaker: int | None = None
     piper_timeout_seconds: int = 120
 
+    # OpenMontage rendering bridge. The UI makes the runtime choice explicit.
+    openmontage_root: Path = Path("/home/faa/OpenMontage")
+    openmontage_python: Path = Path("/home/faa/OpenMontage/.venv/bin/python")
+    openmontage_timeout_seconds: int = 3600
+    videogen_openmontage_runner: Path = Path("./scripts/openmontage_render.py")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
