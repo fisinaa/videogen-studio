@@ -11,10 +11,11 @@ from app.providers.llm.llama_cpp import LlamaCppProvider
 from app.providers.media.router import media_router
 from app.providers.tts.router import tts_router
 from app.schemas import CreateProjectRequest, MediaAsset, Project, SceneUpdate
+from app.services.model_orchestrator import model_orchestrator
 from app.storage import project_store
 
 
-app = FastAPI(title="VideoGen Studio", version="0.10.0")
+app = FastAPI(title="VideoGen Studio", version="0.11.0")
 templates = Jinja2Templates(directory="app/templates")
 llm = LlamaCppProvider()
 
@@ -149,12 +150,17 @@ async def health():
         "llm_url": settings.llm_base_url,
         "media_providers": media_router.status(),
         "tts": tts_router.status(),
+        "orchestrator": await model_orchestrator.status(),
     }
 
 
 @app.get("/api/media/status")
 async def media_status():
-    return {"media": media_router.status(), "tts": tts_router.status()}
+    return {
+        "media": media_router.status(),
+        "tts": tts_router.status(),
+        "orchestrator": await model_orchestrator.status(),
+    }
 
 
 @app.get("/api/projects")
@@ -257,10 +263,33 @@ async def update_scene(project_id: str, scene_id: str, payload: SceneUpdate):
                 "dialogue": payload.dialogue,
                 "action": payload.action,
                 "visual_prompt": payload.visual_prompt,
+                "visual_prompt_ru": payload.visual_prompt_ru,
+                "visual_prompt_en": payload.visual_prompt_en,
+                "negative_prompt_en": payload.negative_prompt_en,
                 "media_search_query": payload.media_search_query,
                 "selected_audio": None if speech_changed else scene.selected_audio,
             }
         )
+        project_store.save(project)
+        return project
+    raise HTTPException(status_code=404, detail="Scene not found")
+
+
+@app.post("/api/projects/{project_id}/scenes/{scene_id}/visual-prompt/rebuild")
+async def rebuild_scene_visual_prompt(project_id: str, scene_id: str):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    for index, scene in enumerate(project.storyboard.scenes):
+        if scene.id != scene_id:
+            continue
+        try:
+            rebuilt = await llm.rebuild_visual_prompt(project.storyboard, scene)
+        except HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"LLM backend request failed: {exc}") from exc
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(status_code=502, detail=f"Prompt builder failed: {exc}") from exc
+        project.storyboard.scenes[index] = rebuilt
         project_store.save(project)
         return project
     raise HTTPException(status_code=404, detail="Scene not found")
@@ -297,7 +326,7 @@ async def search_scene_media(project_id: str, scene_id: str, query: str | None =
     scene = next((item for item in project.storyboard.scenes if item.id == scene_id), None)
     if scene is None:
         raise HTTPException(status_code=404, detail="Scene not found")
-    search_query = (query or scene.media_search_query or scene.visual_prompt).strip()
+    search_query = (query or scene.media_search_query or scene.visual_prompt_en or scene.visual_prompt).strip()
     if not search_query:
         raise HTTPException(status_code=400, detail="Media search query is empty")
     if not media_router.search_enabled():
@@ -322,20 +351,28 @@ async def generate_scene_ai_media(
     if use_reference is None:
         use_reference = provider == "openai"
     reference_path = _character_reference_path(project) if use_reference else None
-    characters = "; ".join(project.storyboard.characters)
-    prompt_parts = [scene.visual_prompt.strip(), f"Visual style: {project.storyboard.visual_style.strip()}"]
-    if characters:
-        prompt_parts.append(f"Characters: {characters}")
+
+    base_prompt = (scene.visual_prompt_en or scene.visual_prompt).strip()
+    if not base_prompt:
+        raise HTTPException(status_code=400, detail="Scene visual prompt is empty")
+
+    prompt_parts = [base_prompt]
+    if not scene.visual_prompt_en:
+        characters = "; ".join(project.storyboard.characters)
+        if project.storyboard.visual_style.strip():
+            prompt_parts.append(f"Visual style: {project.storyboard.visual_style.strip()}")
+        if characters:
+            prompt_parts.append(f"Canonical characters: {characters}")
     if reference_path is not None:
         prompt_parts.append(
             "The attached image is the canonical character reference. Preserve identity, face, body proportions, "
-            "colors, clothing and distinctive features, while following the scene composition, environment, action, "
-            "camera and objects described above."
+            "colors, clothing and distinctive features while following the requested composition and action."
         )
-    else:
-        prompt_parts.append("Prioritize the described scene composition, environment, action, camera and objects.")
+    if scene.negative_prompt_en.strip():
+        prompt_parts.append(f"Avoid: {scene.negative_prompt_en.strip()}")
     prompt_parts.append("No captions, no text, no watermark.")
     prompt = "\n".join(part for part in prompt_parts if part)
+
     try:
         asset = await media_router.generate_image(
             prompt=prompt,
