@@ -46,9 +46,21 @@ class ProjectStore:
         path = self.audio_dir(project_id) / filename
         return path if path.is_file() else None
 
+    def render_dir(self, project_id: str) -> Path:
+        path = self._project_dir(project_id) / "renders"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def render_file(self, project_id: str, filename: str) -> Path | None:
+        if not SAFE_FILENAME_RE.fullmatch(filename):
+            return None
+        path = self.render_dir(project_id) / filename
+        return path if path.is_file() else None
+
     def save(self, project: Project) -> Path:
         project_dir = self._project_dir(project.id)
         project_dir.mkdir(parents=True, exist_ok=True)
+
         output = self._project_path(project.id)
         output.write_text(
             json.dumps(project.model_dump(), ensure_ascii=False, indent=2),
@@ -69,17 +81,6 @@ class ProjectStore:
         except (OSError, json.JSONDecodeError, ValueError):
             return None
 
-    def delete(self, project_id: str) -> bool:
-        """Permanently delete the complete project directory and all generated assets."""
-        try:
-            project_dir = self._project_dir(project_id)
-        except ValueError:
-            return False
-        if not project_dir.is_dir():
-            return False
-        shutil.rmtree(project_dir)
-        return True
-
     def list_projects(self) -> list[dict]:
         result: list[dict] = []
         for path in sorted(self.root.glob("*/project.json"), reverse=True):
@@ -88,6 +89,13 @@ class ProjectStore:
             except (OSError, json.JSONDecodeError):
                 continue
         return result
+
+    def delete(self, project_id: str) -> bool:
+        path = self._project_dir(project_id)
+        if not path.exists():
+            return False
+        shutil.rmtree(path)
+        return True
 
 
 project_store = ProjectStore()
