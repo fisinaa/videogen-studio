@@ -94,8 +94,9 @@ async def videogen_enhancements_js():
     if (!sceneId || !panel) return;
     const stateEl = panel.querySelector('.motion-state');
     const listEl = panel.querySelector('.motion-list');
-    const generateBtn = panel.querySelector('.motion-generate');
-    const resetBtn = panel.querySelector('.motion-reset');
+    const generateBtn = sceneEl.querySelector('.motion-generate');
+    const resetBtn = sceneEl.querySelector('.motion-reset');
+    if (!stateEl || !listEl || !generateBtn || !resetBtn) return;
 
     try {
       const data = await fetchMotionState(sceneId);
@@ -115,35 +116,45 @@ async def videogen_enhancements_js():
 
       listEl.querySelectorAll('.motion-select').forEach(button => button.addEventListener('click', async () => {
         const card = button.closest('.motion-candidate');
+        if (!card) return;
         await motionAction(sceneEl, `/api/motion/projects/${encodeURIComponent(projectId())}/scenes/${encodeURIComponent(sceneId)}/select/${encodeURIComponent(card.dataset.motionId)}`, 'POST', 'Выбираю motion-клип...');
       }));
       listEl.querySelectorAll('.motion-delete').forEach(button => button.addEventListener('click', async () => {
         const card = button.closest('.motion-candidate');
+        if (!card) return;
         await motionAction(sceneEl, `/api/motion/projects/${encodeURIComponent(projectId())}/scenes/${encodeURIComponent(sceneId)}/candidates/${encodeURIComponent(card.dataset.motionId)}`, 'DELETE', 'Удаляю motion-клип...');
       }));
     } catch (error) {
       stateEl.textContent = `Motion: ${error.message || error}`;
       stateEl.style.color = '#ff8d8d';
       generateBtn.disabled = true;
+      resetBtn.disabled = true;
     }
   }
 
   async function motionAction(sceneEl, url, method, progressText) {
     const panel = sceneEl.querySelector('.videogen-motion-panel');
+    if (!panel) return;
     const stateEl = panel.querySelector('.motion-state');
-    const buttons = panel.querySelectorAll('button');
+    const buttons = sceneEl.querySelectorAll('.motion-generate, .motion-reset, .motion-select, .motion-delete');
     buttons.forEach(b => { b.disabled = true; });
-    stateEl.style.color = '';
-    stateEl.textContent = progressText;
+    if (stateEl) {
+      stateEl.style.color = '';
+      stateEl.textContent = progressText;
+    }
     try {
       const response = await fetch(url, {method});
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
-      stateEl.style.color = '#8ee59a';
-      stateEl.textContent = 'Готово.';
+      if (stateEl) {
+        stateEl.style.color = '#8ee59a';
+        stateEl.textContent = 'Готово.';
+      }
     } catch (error) {
-      stateEl.style.color = '#ff8d8d';
-      stateEl.textContent = `Ошибка: ${error.message || error}`;
+      if (stateEl) {
+        stateEl.style.color = '#ff8d8d';
+        stateEl.textContent = `Ошибка: ${error.message || error}`;
+      }
     } finally {
       await hydrateMotionPanel(sceneEl);
     }
