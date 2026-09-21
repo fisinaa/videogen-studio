@@ -15,13 +15,15 @@ from app.services.model_orchestrator import model_orchestrator
 from app.storage import project_store
 
 
-app = FastAPI(title="VideoGen Studio", version="0.11.0")
+app = FastAPI(title="VideoGen Studio", version="0.12.0")
 templates = Jinja2Templates(directory="app/templates")
 llm = LlamaCppProvider()
 
 
 def _image_dimensions(aspect_ratio: str) -> tuple[int, int]:
-    return {"16:9": (1536, 1024), "9:16": (1024, 1536), "1:1": (1024, 1024)}.get(aspect_ratio, (1536, 1024))
+    return {"16:9": (1536, 1024), "9:16": (1024, 1536), "1:1": (1024, 1024)}.get(
+        aspect_ratio, (1536, 1024)
+    )
 
 
 def _local_image_dimensions(aspect_ratio: str) -> tuple[int, int]:
@@ -46,7 +48,20 @@ def _asset_from_generated_file(project: Project, scene_id: str, path: Path) -> M
         author = "local"
         label = f"Recovered local image · {scene_id}"
     local_url = f"/api/projects/{project.id}/media/{path.name}"
-    return MediaAsset(provider=provider, asset_id=path.name, media_type="image", preview_url=local_url, source_url=source_url, download_url=local_url, width=width, height=height, duration_seconds=None, author=author, label=label, local_path=f"media/{path.name}")
+    return MediaAsset(
+        provider=provider,
+        asset_id=path.name,
+        media_type="image",
+        preview_url=local_url,
+        source_url=source_url,
+        download_url=local_url,
+        width=width,
+        height=height,
+        duration_seconds=None,
+        author=author,
+        label=label,
+        local_path=f"media/{path.name}",
+    )
 
 
 def _append_candidate(scene, asset: MediaAsset):
@@ -106,21 +121,108 @@ def _scene_speech_text(scene) -> str:
     return "\n".join(line.strip() for line in scene.dialogue if line.strip()).strip()
 
 
+def _visual_bible(storyboard) -> str:
+    characters = "\n".join(f"- {item}" for item in storyboard.characters) or "- No canonical character description supplied."
+    return (
+        f"PROJECT VISUAL STYLE:\n{storyboard.visual_style}\n\n"
+        f"CANONICAL CHARACTERS:\n{characters}\n\n"
+        "CONTINUITY RULES:\n"
+        "- Keep species, body proportions, fur/skin colors, eye colors, clothing and distinctive features stable.\n"
+        "- Repeat visible canonical traits in every image-generation prompt.\n"
+        "- Do not invent extra characters, clothing, props or text unless the scene requires them.\n"
+        "- Keep recurring locations and important props visually consistent between scenes."
+    )
+
+
+def _ensure_visual_bible(project: Project) -> bool:
+    if project.storyboard.visual_bible.strip():
+        return False
+    project.storyboard.visual_bible = _visual_bible(project.storyboard)
+    return True
+
+
+def _image_prompt(project: Project, scene, use_reference: bool) -> tuple[str, Path | None]:
+    reference_path = _character_reference_path(project) if use_reference else None
+    base_prompt = (scene.visual_prompt_en or scene.visual_prompt).strip()
+    if not base_prompt:
+        raise ValueError("Scene visual prompt is empty")
+
+    prompt_parts = [base_prompt]
+    if project.storyboard.visual_bible.strip():
+        prompt_parts.append("Continuity context:\n" + project.storyboard.visual_bible.strip())
+    if reference_path is not None:
+        prompt_parts.append(
+            "The attached image is the canonical character reference. Preserve identity, face, body proportions, "
+            "colors, clothing and distinctive features while following the requested composition and action."
+        )
+    if scene.negative_prompt_en.strip():
+        prompt_parts.append(f"Avoid: {scene.negative_prompt_en.strip()}")
+    prompt_parts.append("No captions, no text, no watermark.")
+    return "\n".join(part for part in prompt_parts if part), reference_path
+
+
+async def _generate_scene_image(project: Project, scene, provider: str, use_reference: bool):
+    try:
+        prompt, reference_path = _image_prompt(project, scene, use_reference)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return await media_router.generate_image(
+        prompt=prompt,
+        aspect_ratio=project.request.aspect_ratio,
+        project_id=project.id,
+        scene_id=scene.id,
+        media_dir=project_store.media_dir(project.id),
+        reference_path=reference_path,
+        provider=provider,
+    )
+
+
+def _local_profile_for_provider(provider: str) -> str | None:
+    return {
+        "local": "fast",
+        "local_fast": "fast",
+        "local_quality": "quality",
+        "local_next": "next",
+    }.get(provider)
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     tts_status = tts_router.status()
     media_status = media_router.status()
-    return templates.TemplateResponse(request=request, name="index.html", context={"projects": project_store.list_projects()[:10], "llm_url": settings.llm_base_url, "media_status": media_status, "tts_enabled": bool(tts_status["piper"] or tts_status["openai"]), "tts_voice": settings.openai_tts_voice, "tts_status": tts_status})
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={
+            "projects": project_store.list_projects()[:10],
+            "llm_url": settings.llm_base_url,
+            "media_status": media_status,
+            "tts_enabled": bool(tts_status["piper"] or tts_status["openai"]),
+            "tts_voice": settings.openai_tts_voice,
+            "tts_status": tts_status,
+        },
+    )
 
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "llm_provider": settings.llm_provider, "llm_url": settings.llm_base_url, "media_providers": media_router.status(), "tts": tts_router.status(), "orchestrator": await model_orchestrator.status()}
+    return {
+        "status": "ok",
+        "llm_provider": settings.llm_provider,
+        "llm_url": settings.llm_base_url,
+        "media_providers": media_router.status(),
+        "tts": tts_router.status(),
+        "orchestrator": await model_orchestrator.status(),
+    }
 
 
 @app.get("/api/media/status")
 async def media_status():
-    return {"media": media_router.status(), "tts": tts_router.status(), "orchestrator": await model_orchestrator.status()}
+    return {
+        "media": media_router.status(),
+        "tts": tts_router.status(),
+        "orchestrator": await model_orchestrator.status(),
+    }
 
 
 @app.get("/api/projects")
@@ -133,8 +235,25 @@ async def get_project(project_id: str):
     project = project_store.load(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    changed = _ensure_visual_bible(project)
     _recover_generated_media(project)
+    if changed:
+        project_store.save(project)
     return project
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        deleted = project_store.delete(project_id)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Project deletion failed: {exc}") from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"deleted": True, "project_id": project_id, "title": project.storyboard.title}
 
 
 @app.post("/api/projects/{project_id}/media/recover")
@@ -158,7 +277,7 @@ async def get_project_media(project_id: str, filename: str):
 async def get_project_audio(project_id: str, filename: str):
     path = project_store.audio_file(project_id, filename)
     if path is None:
-        raise HTTPException(status_code=404, detail="Media file not found")
+        raise HTTPException(status_code=404, detail="Audio file not found")
     return FileResponse(path, headers={"Cache-Control": "no-store, max-age=0"})
 
 
@@ -170,6 +289,7 @@ async def create_project(payload: CreateProjectRequest):
         raise HTTPException(status_code=502, detail=f"LLM backend request failed: {exc}") from exc
     except (ValueError, KeyError) as exc:
         raise HTTPException(status_code=502, detail=f"LLM returned an invalid storyboard: {exc}") from exc
+    storyboard.visual_bible = _visual_bible(storyboard)
     project = Project(id=uuid4().hex[:12], request=payload, storyboard=storyboard)
     project_store.save(project)
     return project
@@ -180,11 +300,26 @@ async def generate_character_reference(project_id: str):
     project = project_store.load(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    _ensure_visual_bible(project)
     characters = "; ".join(project.storyboard.characters).strip() or "the main recurring character described by the project story"
-    prompt = "\n".join(["Create a clean character reference image for a recurring animated character.", f"Character description: {characters}", f"Project visual style: {project.storyboard.visual_style}", "Show the main character clearly, full body, neutral standing pose, simple uncluttered background, readable silhouette, consistent proportions, colors, face, clothing and distinctive features. Do not include captions, labels, text, watermark, extra characters or a grid."])
+    prompt = "\n".join(
+        [
+            "Create a clean character reference image for a recurring animated character.",
+            f"Character description: {characters}",
+            f"Project visual style: {project.storyboard.visual_style}",
+            "Show the main character clearly, full body, neutral standing pose, simple uncluttered background, readable silhouette, consistent proportions, colors, face, clothing and distinctive features. Do not include captions, labels, text, watermark, extra characters or a grid.",
+        ]
+    )
     provider = "openai" if media_router.openai_image.enabled else "local_fast"
     try:
-        asset = await media_router.generate_image(prompt=prompt, aspect_ratio="1:1", project_id=project.id, scene_id="character-reference", media_dir=project_store.media_dir(project.id), provider=provider)
+        asset = await media_router.generate_image(
+            prompt=prompt,
+            aspect_ratio="1:1",
+            project_id=project.id,
+            scene_id="character-reference",
+            media_dir=project_store.media_dir(project.id),
+            provider=provider,
+        )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Character reference generation failed: {_error_detail(exc)}") from exc
     project.character_reference = asset
@@ -201,19 +336,21 @@ async def update_scene(project_id: str, scene_id: str, payload: SceneUpdate):
         if scene.id != scene_id:
             continue
         speech_changed = scene.narration != payload.narration or scene.dialogue != payload.dialogue
-        project.storyboard.scenes[index] = scene.model_copy(update={
-            "title": payload.title,
-            "duration_seconds": payload.duration_seconds,
-            "narration": payload.narration,
-            "dialogue": payload.dialogue,
-            "action": payload.action,
-            "visual_prompt": payload.visual_prompt,
-            "visual_prompt_ru": scene.visual_prompt_ru if payload.visual_prompt_ru is None else payload.visual_prompt_ru,
-            "visual_prompt_en": scene.visual_prompt_en if payload.visual_prompt_en is None else payload.visual_prompt_en,
-            "negative_prompt_en": scene.negative_prompt_en if payload.negative_prompt_en is None else payload.negative_prompt_en,
-            "media_search_query": payload.media_search_query,
-            "selected_audio": None if speech_changed else scene.selected_audio,
-        })
+        project.storyboard.scenes[index] = scene.model_copy(
+            update={
+                "title": payload.title,
+                "duration_seconds": payload.duration_seconds,
+                "narration": payload.narration,
+                "dialogue": payload.dialogue,
+                "action": payload.action,
+                "visual_prompt": payload.visual_prompt,
+                "visual_prompt_ru": scene.visual_prompt_ru if payload.visual_prompt_ru is None else payload.visual_prompt_ru,
+                "visual_prompt_en": scene.visual_prompt_en if payload.visual_prompt_en is None else payload.visual_prompt_en,
+                "negative_prompt_en": scene.negative_prompt_en if payload.negative_prompt_en is None else payload.negative_prompt_en,
+                "media_search_query": payload.media_search_query,
+                "selected_audio": None if speech_changed else scene.selected_audio,
+            }
+        )
         project_store.save(project)
         return project
     raise HTTPException(status_code=404, detail="Scene not found")
@@ -224,6 +361,7 @@ async def rebuild_scene_visual_prompt(project_id: str, scene_id: str):
     project = project_store.load(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    _ensure_visual_bible(project)
     for index, scene in enumerate(project.storyboard.scenes):
         if scene.id != scene_id:
             continue
@@ -239,11 +377,30 @@ async def rebuild_scene_visual_prompt(project_id: str, scene_id: str):
     raise HTTPException(status_code=404, detail="Scene not found")
 
 
+@app.post("/api/projects/{project_id}/visual-prompts/rebuild-all")
+async def rebuild_all_visual_prompts(project_id: str):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    _ensure_visual_bible(project)
+    ok = 0
+    errors: list[dict] = []
+    for index, scene in enumerate(project.storyboard.scenes):
+        try:
+            project.storyboard.scenes[index] = await llm.rebuild_visual_prompt(project.storyboard, scene)
+            project_store.save(project)
+            ok += 1
+        except Exception as exc:
+            errors.append({"scene_id": scene.id, "error": _error_detail(exc)})
+    return {"project": project, "rebuilt": ok, "errors": errors}
+
+
 @app.post("/api/projects/{project_id}/scenes/{scene_id}/regenerate")
 async def regenerate_scene(project_id: str, scene_id: str):
     project = project_store.load(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    _ensure_visual_bible(project)
     for index, scene in enumerate(project.storyboard.scenes):
         if scene.id != scene_id:
             continue
@@ -263,7 +420,11 @@ async def regenerate_scene(project_id: str, scene_id: str):
 
 
 @app.get("/api/projects/{project_id}/scenes/{scene_id}/media/search")
-async def search_scene_media(project_id: str, scene_id: str, query: str | None = Query(default=None, max_length=1000)):
+async def search_scene_media(
+    project_id: str,
+    scene_id: str,
+    query: str | None = Query(default=None, max_length=1000),
+):
     project = project_store.load(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -280,34 +441,25 @@ async def search_scene_media(project_id: str, scene_id: str, query: str | None =
 
 
 @app.post("/api/projects/{project_id}/scenes/{scene_id}/media/generate-ai")
-async def generate_scene_ai_media(project_id: str, scene_id: str, provider: str = Query(default="auto", pattern="^(auto|local|local_fast|local_quality|local_next|openai)$"), use_reference: bool | None = Query(default=None)):
+async def generate_scene_ai_media(
+    project_id: str,
+    scene_id: str,
+    provider: str = Query(default="auto", pattern="^(auto|local|local_fast|local_quality|local_next|openai)$"),
+    use_reference: bool | None = Query(default=None),
+):
     project = project_store.load(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    _ensure_visual_bible(project)
     scene = next((item for item in project.storyboard.scenes if item.id == scene_id), None)
     if scene is None:
         raise HTTPException(status_code=404, detail="Scene not found")
     if use_reference is None:
         use_reference = provider == "openai"
-    reference_path = _character_reference_path(project) if use_reference else None
-    base_prompt = (scene.visual_prompt_en or scene.visual_prompt).strip()
-    if not base_prompt:
-        raise HTTPException(status_code=400, detail="Scene visual prompt is empty")
-    prompt_parts = [base_prompt]
-    if not scene.visual_prompt_en:
-        characters = "; ".join(project.storyboard.characters)
-        if project.storyboard.visual_style.strip():
-            prompt_parts.append(f"Visual style: {project.storyboard.visual_style.strip()}")
-        if characters:
-            prompt_parts.append(f"Canonical characters: {characters}")
-    if reference_path is not None:
-        prompt_parts.append("The attached image is the canonical character reference. Preserve identity, face, body proportions, colors, clothing and distinctive features while following the requested composition and action.")
-    if scene.negative_prompt_en.strip():
-        prompt_parts.append(f"Avoid: {scene.negative_prompt_en.strip()}")
-    prompt_parts.append("No captions, no text, no watermark.")
-    prompt = "\n".join(part for part in prompt_parts if part)
     try:
-        asset = await media_router.generate_image(prompt=prompt, aspect_ratio=project.request.aspect_ratio, project_id=project.id, scene_id=scene.id, media_dir=project_store.media_dir(project.id), reference_path=reference_path, provider=provider)
+        asset = await _generate_scene_image(project, scene, provider, use_reference)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Image generation failed: {_error_detail(exc)}") from exc
     for index, item in enumerate(project.storyboard.scenes):
@@ -316,6 +468,42 @@ async def generate_scene_ai_media(project_id: str, scene_id: str, provider: str 
             project_store.save(project)
             return project
     raise HTTPException(status_code=404, detail="Scene not found")
+
+
+@app.post("/api/projects/{project_id}/media/generate-batch")
+async def generate_project_images_batch(
+    project_id: str,
+    provider: str = Query(default="local_next", pattern="^(local|local_fast|local_quality|local_next|openai)$"),
+    use_reference: bool = Query(default=False),
+):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    _ensure_visual_bible(project)
+
+    ok = 0
+    errors: list[dict] = []
+    profile = _local_profile_for_provider(provider)
+
+    async def run_all() -> None:
+        nonlocal ok
+        for index, scene in enumerate(project.storyboard.scenes):
+            try:
+                ref = use_reference or (provider == "openai" and project.character_reference is not None)
+                asset = await _generate_scene_image(project, scene, provider, ref)
+                project.storyboard.scenes[index] = _append_candidate(project.storyboard.scenes[index], asset)
+                project_store.save(project)
+                ok += 1
+            except Exception as exc:
+                errors.append({"scene_id": scene.id, "error": _error_detail(exc)})
+
+    if profile is not None:
+        async with model_orchestrator.local_image_batch(profile):
+            await run_all()
+    else:
+        await run_all()
+
+    return {"project": project, "generated": ok, "errors": errors}
 
 
 @app.post("/api/projects/{project_id}/scenes/{scene_id}/media/select")
@@ -329,7 +517,9 @@ async def select_scene_media(project_id: str, scene_id: str, payload: MediaAsset
         candidates = list(scene.media_candidates)
         if not any(item.asset_id == payload.asset_id for item in candidates):
             candidates.append(payload)
-        project.storyboard.scenes[index] = scene.model_copy(update={"selected_media": payload, "media_candidates": candidates})
+        project.storyboard.scenes[index] = scene.model_copy(
+            update={"selected_media": payload, "media_candidates": candidates}
+        )
         project_store.save(project)
         return project
     raise HTTPException(status_code=404, detail="Scene not found")
@@ -361,7 +551,10 @@ async def delete_scene_media_candidate(project_id: str, scene_id: str, asset_id:
         if scene.id != scene_id:
             continue
         if scene.selected_media is not None and scene.selected_media.asset_id == asset_id:
-            raise HTTPException(status_code=409, detail="Cannot remove the currently selected media. Select another candidate first.")
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot remove the currently selected media. Select another candidate first.",
+            )
         candidates = [item for item in scene.media_candidates if item.asset_id != asset_id]
         if len(candidates) == len(scene.media_candidates):
             raise HTTPException(status_code=404, detail="Media candidate not found")
@@ -383,7 +576,12 @@ async def generate_scene_audio(project_id: str, scene_id: str):
     if not speech_text:
         raise HTTPException(status_code=400, detail="Scene has no narration or dialogue to synthesize")
     try:
-        asset = await tts_router.generate(text=speech_text, project_id=project.id, scene_id=scene.id, audio_dir=project_store.audio_dir(project.id))
+        asset = await tts_router.generate(
+            text=speech_text,
+            project_id=project.id,
+            scene_id=scene.id,
+            audio_dir=project_store.audio_dir(project.id),
+        )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"TTS generation failed: {_error_detail(exc)}") from exc
     for index, item in enumerate(project.storyboard.scenes):
@@ -392,3 +590,34 @@ async def generate_scene_audio(project_id: str, scene_id: str):
             project_store.save(project)
             return project
     raise HTTPException(status_code=404, detail="Scene not found")
+
+
+@app.post("/api/projects/{project_id}/audio/generate-missing")
+async def generate_missing_audio(project_id: str):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    ok = 0
+    skipped = 0
+    errors: list[dict] = []
+    for index, scene in enumerate(project.storyboard.scenes):
+        if scene.selected_audio is not None:
+            skipped += 1
+            continue
+        text = _scene_speech_text(scene)
+        if not text:
+            skipped += 1
+            continue
+        try:
+            asset = await tts_router.generate(
+                text=text,
+                project_id=project.id,
+                scene_id=scene.id,
+                audio_dir=project_store.audio_dir(project.id),
+            )
+            project.storyboard.scenes[index] = scene.model_copy(update={"selected_audio": asset})
+            project_store.save(project)
+            ok += 1
+        except Exception as exc:
+            errors.append({"scene_id": scene.id, "error": _error_detail(exc)})
+    return {"project": project, "generated": ok, "skipped": skipped, "errors": errors}
