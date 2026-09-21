@@ -14,6 +14,8 @@ class ModelOrchestrator:
     def __init__(self) -> None:
         self._gpu_lock = asyncio.Lock()
         self._current_job = "idle"
+        self._image_batch_owner: asyncio.Task | None = None
+        self._image_batch_profile: str | None = None
 
     @property
     def enabled(self) -> bool:
@@ -56,9 +58,12 @@ class ModelOrchestrator:
         if not self.enabled:
             return
 
-        # If an image job currently owns the GPU, an incoming LLM request waits
-        # until the image finishes and the orchestrator has restarted llama-server.
-        if self._gpu_lock.locked() and self._current_job.startswith("image:"):
+        current = asyncio.current_task()
+        if (
+            self._gpu_lock.locked()
+            and self._current_job.startswith("image:")
+            and current is not self._image_batch_owner
+        ):
             async with self._gpu_lock:
                 pass
 
@@ -68,6 +73,7 @@ class ModelOrchestrator:
                 return
             except RuntimeError:
                 pass
+
         code, detail = await self._systemctl("start")
         if code != 0:
             raise RuntimeError(
@@ -126,6 +132,13 @@ class ModelOrchestrator:
         if not self.enabled:
             yield
             return
+
+        current = asyncio.current_task()
+        if self._image_batch_owner is current:
+            # The batch context already owns the GPU and has stopped llama-server.
+            yield
+            return
+
         async with self._gpu_lock:
             self._current_job = f"image:{profile}"
             self._write_lock_file(self._current_job)
@@ -143,6 +156,34 @@ class ModelOrchestrator:
                     self._current_job = "idle"
                     self._remove_lock_file()
 
+    @asynccontextmanager
+    async def local_image_batch(self, profile: str):
+        """Run many local image jobs while stopping llama-server only once."""
+        if not self.enabled:
+            yield
+            return
+
+        async with self._gpu_lock:
+            self._image_batch_owner = asyncio.current_task()
+            self._image_batch_profile = profile
+            self._current_job = f"image-batch:{profile}"
+            self._write_lock_file(self._current_job)
+            llm_was_active = False
+            try:
+                llm_was_active = await self.stop_llm()
+                yield
+            finally:
+                try:
+                    if settings.llm_restart_after_image and llm_was_active:
+                        self._current_job = "llm:restart"
+                        self._write_lock_file(self._current_job)
+                        await self.ensure_llm_running()
+                finally:
+                    self._image_batch_owner = None
+                    self._image_batch_profile = None
+                    self._current_job = "idle"
+                    self._remove_lock_file()
+
     async def status(self) -> dict:
         llm_active = await self.llm_active() if self.enabled else None
         return {
@@ -151,6 +192,7 @@ class ModelOrchestrator:
             "llm_active": llm_active,
             "gpu_busy": self._gpu_lock.locked(),
             "current_job": self._current_job,
+            "image_batch_profile": self._image_batch_profile,
             "lock_file": str(settings.gpu_lock_file),
         }
 
