@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from app.config import settings
 from app.schemas import MediaAsset
+from app.services.model_orchestrator import model_orchestrator
 
 
 class StableDiffusionCppProvider:
@@ -169,7 +170,6 @@ class StableDiffusionCppProvider:
             cmd.extend(["-t", str(settings.sd_cpp_threads)])
 
         if reference_path is not None and reference_path.is_file():
-            # FLUX.2 supports reference images natively with -r. Older local profiles use img2img.
             if p["name"] == "next":
                 cmd.extend(["-r", str(reference_path)])
             else:
@@ -179,19 +179,20 @@ class StableDiffusionCppProvider:
         if settings.sd_cpp_verbose:
             cmd.append("-v")
 
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=settings.sd_cpp_timeout_seconds
+        async with model_orchestrator.local_image_slot(p["name"]):
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-        except TimeoutError as exc:
-            process.kill()
-            await process.wait()
-            raise RuntimeError("Local image generation timed out") from exc
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(), timeout=settings.sd_cpp_timeout_seconds
+                )
+            except TimeoutError as exc:
+                process.kill()
+                await process.wait()
+                raise RuntimeError("Local image generation timed out") from exc
 
         if process.returncode != 0:
             detail = (stderr or stdout).decode("utf-8", errors="replace")[-5000:]
