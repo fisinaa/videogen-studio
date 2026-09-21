@@ -16,6 +16,14 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.7
     llm_max_tokens: int = 1800
 
+    # Automatic model/GPU orchestration. Uses a user-level systemd unit for llama-server.
+    model_orchestration_enabled: bool = False
+    llm_systemd_unit: str = "videogen-llama.service"
+    llm_restart_after_image: bool = True
+    llm_start_timeout_seconds: int = 90
+    llm_stop_timeout_seconds: int = 30
+    gpu_lock_file: Path = Path("/tmp/videogen-gpu.lock")
+
     pexels_api_key: str = ""
     pixabay_api_key: str = ""
 
