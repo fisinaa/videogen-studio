@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from app.config import settings
 from app.schemas import MediaAsset, Project, Scene
+from app.services.model_orchestrator import model_orchestrator
 from app.services.production import probe_duration
 from app.storage import project_store
 
@@ -48,6 +49,7 @@ class MotionService:
             "command_configured": bool(settings.motion_command.strip()),
             "default_duration_seconds": settings.motion_default_duration_seconds,
             "max_duration_seconds": settings.motion_max_duration_seconds,
+            "gpu_orchestration": model_orchestrator.enabled,
             "note": (
                 "Local image-to-video command provider is ready."
                 if self.enabled
@@ -120,28 +122,29 @@ class MotionService:
             if not cmd:
                 raise MotionGenerationError("MOTION_COMMAND is empty after formatting")
 
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(), timeout=settings.motion_timeout_seconds
+            async with model_orchestrator.local_motion_slot():
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
                 )
-            except TimeoutError as exc:
-                process.kill()
-                await process.wait()
-                raise MotionGenerationError("Motion generation timed out") from exc
+                try:
+                    stdout, stderr = await asyncio.wait_for(
+                        process.communicate(), timeout=settings.motion_timeout_seconds
+                    )
+                except TimeoutError as exc:
+                    process.kill()
+                    await process.wait()
+                    raise MotionGenerationError("Motion generation timed out") from exc
 
-            if process.returncode != 0:
-                out = stdout.decode("utf-8", errors="replace")[-1500:]
-                err = stderr.decode("utf-8", errors="replace")[-3000:]
-                raise MotionGenerationError(
-                    f"Motion provider exited {process.returncode}.\n{err or out}"
-                )
-            if not output.is_file() or output.stat().st_size == 0:
-                raise MotionGenerationError("Motion provider finished without creating the MP4 output")
+                if process.returncode != 0:
+                    out = stdout.decode("utf-8", errors="replace")[-1500:]
+                    err = stderr.decode("utf-8", errors="replace")[-3000:]
+                    raise MotionGenerationError(
+                        f"Motion provider exited {process.returncode}.\n{err or out}"
+                    )
+                if not output.is_file() or output.stat().st_size == 0:
+                    raise MotionGenerationError("Motion provider finished without creating the MP4 output")
         finally:
             prompt_path.unlink(missing_ok=True)
 
