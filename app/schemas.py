@@ -77,6 +77,7 @@ class Storyboard(BaseModel):
     title: str
     logline: str
     visual_style: str
+    visual_bible: str = ""
     characters: list[str] = Field(default_factory=list)
     scenes: list[Scene]
 
