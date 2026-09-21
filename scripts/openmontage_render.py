@@ -36,7 +36,6 @@ def _tool_result(result) -> dict:
 
 
 def _pinned_run_hf(self, args, *, cwd, timeout, check):
-    """Run the known-working HyperFrames package spec for every CLI operation."""
     npx = shutil.which("npx") or "npx"
     cmd = [npx, "--yes", HYPERFRAMES_NPX_PACKAGE, *args]
     try:
@@ -57,80 +56,76 @@ def _pinned_run_hf(self, args, *, cwd, timeout, check):
         )
 
 
-def _videogen_cut_to_html(self, index, cut, width, height):
-    """VideoGen-specific HyperFrames image treatment with full-scene motion.
+def _subtitle_html(self, text: str) -> str:
+    if not text.strip():
+        return ""
+    safe = self._escape_text(text.strip())
+    return (
+        '<div class="videogen-subtitle" style="position:absolute;left:8%;right:8%;bottom:6%;'
+        'z-index:20;text-align:center;font-family:Arial,sans-serif;font-size:42px;line-height:1.25;'
+        'font-weight:700;color:white;text-shadow:0 2px 8px rgba(0,0,0,.95);">'
+        f'<span style="display:inline;padding:.18em .42em;background:rgba(0,0,0,.58);'
+        f'box-decoration-break:clone;-webkit-box-decoration-break:clone;border-radius:10px;">{safe}</span></div>'
+    )
 
-    OpenMontage's current Phase-1 HyperFrames scaffold only gives still images a
-    short 0.5 second entrance tween. VideoGen already sends an `animation` hint per
-    scene, so turn that into deterministic GSAP camera movement across the entire
-    scene while preserving OpenMontage's native HTML contract.
-    """
+
+def _videogen_cut_to_html(self, index, cut, width, height):
+    """VideoGen scene renderer: full-scene image motion, video clips and subtitles."""
     cut_id = f"cut-{index}"
     in_s = float(cut.get("in_seconds", 0) or 0)
     out_s = float(cut.get("out_seconds", 0) or 0)
     duration = max(0.1, out_s - in_s)
     source = cut.get("source") or ""
-    cut_type = (cut.get("type") or "").lower()
-    text = cut.get("text") or cut.get("title") or ""
     src_path = Path(source) if source else None
     ext = src_path.suffix.lower() if src_path else ""
+    subtitle = str(cut.get("subtitle") or "")
+    subtitle_html = _subtitle_html(self, subtitle)
 
     image_exts = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp", ".gif"}
+    video_exts = {".mp4", ".mov", ".webm", ".mkv", ".m4v"}
+
     if ext in image_exts and src_path:
         rel = self._rel_from_workspace(str(src_path))
         html = (
-            f'<img id="{cut_id}" class="clip image-clip" '
-            f'src="{self._escape_attr(rel)}" '
+            f'<div id="{cut_id}" class="clip videogen-scene" '
             f'data-start="{self._f(in_s)}" data-duration="{self._f(duration)}" '
-            f'data-track-index="1" alt="">'
+            f'data-track-index="1" style="position:absolute;inset:0;overflow:hidden;">'
+            f'<img class="videogen-image" src="{self._escape_attr(rel)}" alt="" '
+            f'style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;">'
+            f'{subtitle_html}</div>'
         )
         animation = str(cut.get("animation") or "ken-burns").lower()
         start = self._f(in_s)
         dur = self._f(duration)
-        target = f'"#{cut_id}"'
-
+        target = f'"#{cut_id} .videogen-image"'
         motions = {
-            "ken-burns": (
-                f'tl.fromTo({target}, {{ scale: 1.02, xPercent: -1.2, yPercent: 0.6, opacity: 0.001 }}, '
-                f'{{ scale: 1.12, xPercent: 1.2, yPercent: -0.6, opacity: 1, duration: {dur}, ease: "none" }}, {start});'
-            ),
-            "zoom-in": (
-                f'tl.fromTo({target}, {{ scale: 1.0, opacity: 0.001 }}, '
-                f'{{ scale: 1.14, opacity: 1, duration: {dur}, ease: "none" }}, {start});'
-            ),
-            "zoom-out": (
-                f'tl.fromTo({target}, {{ scale: 1.14, opacity: 0.001 }}, '
-                f'{{ scale: 1.02, opacity: 1, duration: {dur}, ease: "none" }}, {start});'
-            ),
-            "pan-left": (
-                f'tl.fromTo({target}, {{ scale: 1.10, xPercent: 2.8, opacity: 0.001 }}, '
-                f'{{ scale: 1.10, xPercent: -2.8, opacity: 1, duration: {dur}, ease: "none" }}, {start});'
-            ),
-            "pan-right": (
-                f'tl.fromTo({target}, {{ scale: 1.10, xPercent: -2.8, opacity: 0.001 }}, '
-                f'{{ scale: 1.10, xPercent: 2.8, opacity: 1, duration: {dur}, ease: "none" }}, {start});'
-            ),
-            "drift-up": (
-                f'tl.fromTo({target}, {{ scale: 1.08, yPercent: 2.3, opacity: 0.001 }}, '
-                f'{{ scale: 1.11, yPercent: -2.3, opacity: 1, duration: {dur}, ease: "none" }}, {start});'
-            ),
-            "drift-down": (
-                f'tl.fromTo({target}, {{ scale: 1.08, yPercent: -2.3, opacity: 0.001 }}, '
-                f'{{ scale: 1.11, yPercent: 2.3, opacity: 1, duration: {dur}, ease: "none" }}, {start});'
-            ),
-            "static": (
-                f'tl.fromTo({target}, {{ opacity: 0.001 }}, '
-                f'{{ opacity: 1, duration: 0.35, ease: "power2.out" }}, {start});'
-            ),
+            "ken-burns": f'tl.fromTo({target}, {{scale:1.02,xPercent:-1.2,yPercent:.6}}, {{scale:1.12,xPercent:1.2,yPercent:-.6,duration:{dur},ease:"none"}}, {start});',
+            "zoom-in": f'tl.fromTo({target}, {{scale:1.0}}, {{scale:1.14,duration:{dur},ease:"none"}}, {start});',
+            "zoom-out": f'tl.fromTo({target}, {{scale:1.14}}, {{scale:1.02,duration:{dur},ease:"none"}}, {start});',
+            "pan-left": f'tl.fromTo({target}, {{scale:1.10,xPercent:2.8}}, {{scale:1.10,xPercent:-2.8,duration:{dur},ease:"none"}}, {start});',
+            "pan-right": f'tl.fromTo({target}, {{scale:1.10,xPercent:-2.8}}, {{scale:1.10,xPercent:2.8,duration:{dur},ease:"none"}}, {start});',
+            "drift-up": f'tl.fromTo({target}, {{scale:1.08,yPercent:2.3}}, {{scale:1.11,yPercent:-2.3,duration:{dur},ease:"none"}}, {start});',
+            "drift-down": f'tl.fromTo({target}, {{scale:1.08,yPercent:-2.3}}, {{scale:1.11,yPercent:2.3,duration:{dur},ease:"none"}}, {start});',
+            "static": f'tl.set({target}, {{scale:1}}, {start});',
         }
         return html, motions.get(animation, motions["ken-burns"])
 
-    # Preserve OpenMontage's own handling for text/video/composition clips.
+    if ext in video_exts and src_path:
+        rel = self._rel_from_workspace(str(src_path))
+        html = (
+            f'<div id="{cut_id}" class="clip videogen-scene" '
+            f'data-start="{self._f(in_s)}" data-duration="{self._f(duration)}" '
+            f'data-track-index="1" style="position:absolute;inset:0;overflow:hidden;">'
+            f'<video class="videogen-video" src="{self._escape_attr(rel)}" muted playsinline '
+            f'style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;"></video>'
+            f'{subtitle_html}</div>'
+        )
+        return html, None
+
     return self._videogen_original_cut_to_html(index, cut, width, height)
 
 
 def _patch_hyperframes_package() -> None:
-    """Make OpenMontage use the exact HyperFrames package spec that works here."""
     from tools.video.hyperframes_compose import HyperFramesCompose
 
     HyperFramesCompose._NPM_PACKAGE = HYPERFRAMES_NPX_PACKAGE
@@ -138,16 +133,12 @@ def _patch_hyperframes_package() -> None:
     HyperFramesCompose._cli_probe_cache = None
     HyperFramesCompose._run_hf = _pinned_run_hf
 
-    # Patch only once per helper process. Keep a handle to OpenMontage's original
-    # implementation for non-image cuts and replace image behavior with full-scene
-    # motion driven by VideoGen's `animation` hint.
     if not hasattr(HyperFramesCompose, "_videogen_original_cut_to_html"):
         HyperFramesCompose._videogen_original_cut_to_html = HyperFramesCompose._cut_to_html
         HyperFramesCompose._cut_to_html = _videogen_cut_to_html
 
 
 def _hyperframes_compat_probe() -> dict:
-    """Accept HyperFrames when only explicitly optional doctor checks fail."""
     from tools.video.hyperframes_compose import HyperFramesCompose
 
     _patch_hyperframes_package()
@@ -177,11 +168,7 @@ def _hyperframes_compat_probe() -> dict:
 
     checks = payload.get("checks") or []
     failed = [c for c in checks if not c.get("ok", False)]
-    required_failed = [
-        c for c in failed
-        if "optional" not in str(c.get("detail", "")).lower()
-    ]
-
+    required_failed = [c for c in failed if "optional" not in str(c.get("detail", "")).lower()]
     accepted = not required_failed
     if accepted:
         HyperFramesCompose._cli_probe_cache = {"status": "ok"}
