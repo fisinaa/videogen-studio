@@ -1,6 +1,7 @@
 from starlette.responses import Response
 
 from app.main import app
+from app.routes.motion import router as motion_router
 from app.routes.openmontage import router as openmontage_router
 from app.routes.production import router as production_router
 from app.routes.ui_tools import router as ui_tools_router
@@ -8,6 +9,7 @@ from app.routes.ui_tools import router as ui_tools_router
 
 app.include_router(openmontage_router)
 app.include_router(production_router)
+app.include_router(motion_router)
 app.include_router(ui_tools_router)
 
 
