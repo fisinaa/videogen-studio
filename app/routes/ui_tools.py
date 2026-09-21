@@ -20,42 +20,109 @@ async def videogen_enhancements_js():
     return active?.dataset?.projectId || null;
   }
 
-  function setRenderButtonState(button, runtime, hasExisting) {
-    const label = runtime === 'hyperframes' ? 'HyperFrames' : 'Remotion';
-    button.textContent = hasExisting ? `Перерендерить ${label}` : `Рендер ${label}`;
+  function enhanceImageModelMenus() {
+    document.querySelectorAll('.scene-editor').forEach(scene => {
+      if (scene.dataset.imageModelMenu === '1') return;
+
+      const actions = scene.querySelector('.scene-actions');
+      const fast = actions?.querySelector('.generate-fast');
+      const quality = actions?.querySelector('.generate-quality');
+      const next = actions?.querySelector('.generate-next');
+      const openai = actions?.querySelector('.generate-openai');
+      if (!actions || !fast || !quality || !next || !openai) return;
+
+      scene.dataset.imageModelMenu = '1';
+      [fast, quality, next, openai].forEach(button => { button.style.display = 'none'; });
+
+      const group = document.createElement('span');
+      group.className = 'image-model-menu';
+      group.style.cssText = 'display:inline-flex;gap:6px;align-items:center;';
+
+      const select = document.createElement('select');
+      select.className = 'image-model-select';
+      select.title = 'Модель генерации изображения';
+      select.style.cssText = 'width:auto;min-width:150px;margin:0;padding:10px 30px 10px 10px;background:#0d1016;color:#fff;border:1px solid #303646;border-radius:10px;';
+      select.innerHTML = `
+        <option value="fast">Local Fast</option>
+        <option value="quality" ${quality.disabled ? 'disabled' : ''}>Local Quality${quality.disabled ? ' — недоступна' : ''}</option>
+        <option value="next" ${next.disabled ? 'disabled' : ''}>Local Next${next.disabled ? ' — недоступна' : ''}</option>
+        <option value="openai">OpenAI</option>
+      `;
+      if (!next.disabled) select.value = 'next';
+
+      const generate = document.createElement('button');
+      generate.type = 'button';
+      generate.className = 'image-model-generate';
+      generate.textContent = 'Сгенерировать картинку';
+      generate.style.background = '#2d7651';
+      generate.addEventListener('click', () => {
+        const target = {
+          fast,
+          quality,
+          next,
+          openai,
+        }[select.value];
+        if (target && !target.disabled) target.click();
+      });
+
+      group.append(select, generate);
+      actions.insertBefore(group, fast);
+    });
+  }
+
+  function setRenderButtonState(button, hasExisting) {
+    button.textContent = hasExisting ? 'Пересобрать видео' : 'Собрать видео';
     button.dataset.hasExisting = hasExisting ? '1' : '0';
   }
 
   function ensurePanel() {
+    enhanceImageModelMenus();
+
     const actions = document.querySelector('.project-actions');
-    if (!actions || actions.querySelector('.render-hyperframes')) return;
+    if (!actions || actions.querySelector('.videogen-render-main')) return;
 
-    const hf = document.createElement('button');
-    hf.type = 'button';
-    hf.className = 'render-hyperframes';
-    hf.style.background = '#7b3f98';
-    setRenderButtonState(hf, 'hyperframes', false);
+    const runtime = document.createElement('select');
+    runtime.className = 'videogen-render-runtime';
+    runtime.title = 'Движок финальной сборки';
+    runtime.style.cssText = 'width:auto;min-width:230px;margin:0;padding:10px 30px 10px 10px;background:#0d1016;color:#fff;border:1px solid #303646;border-radius:10px;';
+    runtime.innerHTML = `
+      <option value="hyperframes">HyperFrames — основной</option>
+      <option value="remotion">Remotion — альтернативный</option>
+    `;
 
-    const remotion = document.createElement('button');
-    remotion.type = 'button';
-    remotion.className = 'render-remotion';
-    remotion.style.background = '#3b5f9b';
-    setRenderButtonState(remotion, 'remotion', false);
+    const render = document.createElement('button');
+    render.type = 'button';
+    render.className = 'videogen-render-main';
+    render.style.background = '#7b3f98';
+    setRenderButtonState(render, false);
+
+    const controls = document.createElement('span');
+    controls.className = 'videogen-render-controls';
+    controls.style.cssText = 'display:inline-flex;gap:7px;align-items:center;flex-wrap:wrap;';
+    controls.append(runtime, render);
 
     const wrap = document.createElement('div');
     wrap.className = 'videogen-render-panel';
     wrap.style.cssText = 'margin:14px 0;padding:14px;border:1px solid #303646;border-radius:12px;background:#0d1016;';
-    wrap.innerHTML = '<b>Финальный рендер</b><div class="render-state muted" style="margin-top:8px">Готов к запуску.</div><div class="render-output" style="margin-top:10px"></div>';
+    wrap.innerHTML = `
+      <b>Финальное видео</b>
+      <div class="muted" style="margin-top:6px;line-height:1.45">
+        HyperFrames — основной монтаж: картинки/готовые motion-клипы, движение камеры, озвучка и субтитры.<br>
+        Remotion — альтернативный движок композиции; сам по себе персонажей на картинке не оживляет.
+      </div>
+      <div class="render-state muted" style="margin-top:8px">Готов к сборке.</div>
+      <div class="render-output" style="margin-top:10px"></div>
+    `;
 
-    actions.append(hf, remotion);
+    actions.append(controls);
     actions.parentElement?.appendChild(wrap);
 
-    hf.addEventListener('click', () => runRender('hyperframes', hf, remotion, wrap));
-    remotion.addEventListener('click', () => runRender('remotion', hf, remotion, wrap));
-    loadExisting(wrap, hf, remotion);
+    render.addEventListener('click', () => runRender(runtime.value, render, runtime, wrap));
+    runtime.addEventListener('change', () => loadExisting(wrap, render, runtime));
+    loadExisting(wrap, render, runtime);
   }
 
-  async function loadExisting(panel, hf, remotion) {
+  async function loadExisting(panel, button, runtimeSelect) {
     const id = projectId();
     if (!id) return;
     try {
@@ -63,14 +130,14 @@ async def videogen_enhancements_js():
       if (!response.ok) return;
       const data = await response.json();
       const renders = data.renders || [];
-      const hyperframes = renders.find(item => String(item.filename || '').includes('hyperframes'));
-      const remotionRender = renders.find(item => String(item.filename || '').includes('remotion'));
-      setRenderButtonState(hf, 'hyperframes', Boolean(hyperframes));
-      setRenderButtonState(remotion, 'remotion', Boolean(remotionRender));
-      const first = renders[0];
-      if (first) {
-        panel.querySelector('.render-state').textContent = 'Есть готовый рендер. После изменений можно запустить перерендер — файл будет обновлён.';
-        showVideo(panel, first.download_url, first.filename);
+      const chosenRuntime = runtimeSelect.value;
+      const chosen = renders.find(item => String(item.filename || '').includes(chosenRuntime));
+      setRenderButtonState(button, Boolean(chosen));
+      if (chosen) {
+        panel.querySelector('.render-state').textContent = 'Есть готовая версия. После изменений нажми «Пересобрать видео».';
+        showVideo(panel, chosen.download_url, chosen.filename);
+      } else {
+        panel.querySelector('.render-state').textContent = 'Для выбранного движка готового рендера пока нет.';
       }
     } catch (_) {}
   }
@@ -81,7 +148,7 @@ async def videogen_enhancements_js():
     output.innerHTML = `<video controls preload="metadata" src="${esc(stamp)}" style="width:100%;max-width:760px;border-radius:10px;background:#000"></video><div style="margin-top:8px"><a href="${esc(url)}" target="_blank" style="color:#bdafff">${esc(filename || 'Открыть MP4')}</a></div>`;
   }
 
-  async function runRender(runtime, button, otherButton, panel) {
+  async function runRender(runtime, button, runtimeSelect, panel) {
     const id = projectId();
     const state = panel.querySelector('.render-state');
     if (!id) {
@@ -92,10 +159,10 @@ async def videogen_enhancements_js():
 
     const isRerender = button.dataset.hasExisting === '1';
     button.disabled = true;
-    otherButton.disabled = true;
+    runtimeSelect.disabled = true;
     state.style.color = '';
     state.textContent = isRerender
-      ? 'Синхронизация изменений перед перерендером...'
+      ? 'Синхронизация изменений перед пересборкой...'
       : 'Синхронизация таймингов по озвучке...';
     try {
       const sync = await fetch(`/api/production/projects/${encodeURIComponent(id)}/sync`, {method:'POST'});
@@ -104,25 +171,28 @@ async def videogen_enhancements_js():
         throw new Error(err.detail || `sync HTTP ${sync.status}`);
       }
 
-      state.textContent = `${isRerender ? 'Перерендер' : 'Рендер'} ${runtime} запущен. Это может занять несколько минут...`;
+      state.textContent = `${isRerender ? 'Пересборка' : 'Сборка'} через ${runtime} запущена. Это может занять несколько минут...`;
       const response = await fetch(`/api/openmontage/projects/${encodeURIComponent(id)}/render?runtime=${encodeURIComponent(runtime)}`, {method:'POST'});
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || `render HTTP ${response.status}`);
 
       state.textContent = `Готово: ${data.filename || 'MP4'}`;
       state.style.color = '#8ee59a';
-      setRenderButtonState(button, runtime, true);
+      setRenderButtonState(button, true);
       if (data.download_url) showVideo(panel, data.download_url, data.filename);
     } catch (error) {
       state.textContent = `Ошибка рендера: ${error.message || error}`;
       state.style.color = '#ff8d8d';
     } finally {
       button.disabled = false;
-      otherButton.disabled = false;
+      runtimeSelect.disabled = false;
     }
   }
 
-  const observer = new MutationObserver(ensurePanel);
+  const observer = new MutationObserver(() => {
+    ensurePanel();
+    enhanceImageModelMenus();
+  });
   observer.observe(document.documentElement, {childList:true, subtree:true});
   ensurePanel();
 })();
