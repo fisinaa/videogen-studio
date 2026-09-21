@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.config import settings
 from app.schemas import Project
+from app.services.production import sync_project
 from app.storage import project_store
 
 
@@ -49,33 +50,50 @@ class OpenMontageIntegration:
         animations = ["ken-burns", "pan-left", "pan-right", "zoom-in", "drift-up"]
 
         for index, scene in enumerate(project.storyboard.scenes):
-            if scene.selected_media is None:
-                raise ValueError(f"{scene.id} has no selected image")
-            image_path = self._resolve_media_path(project, scene.selected_media.local_path, "media")
-            if image_path is None or not image_path.is_file():
-                raise ValueError(f"{scene.id} selected image is not a local file")
+            source_asset = scene.selected_media
+            source_path: Path | None = None
+            source_type = "image"
 
-            duration = max(float(scene.duration_seconds), 0.5)
+            if scene.motion_mode == "image_to_video" and scene.selected_motion_media is not None:
+                candidate = scene.selected_motion_media
+                candidate_path = self._resolve_media_path(project, candidate.local_path, "media")
+                if candidate.media_type == "video" and candidate_path is not None and candidate_path.is_file():
+                    source_asset = candidate
+                    source_path = candidate_path
+                    source_type = "video"
+
+            if source_path is None:
+                if source_asset is None:
+                    raise ValueError(f"{scene.id} has no selected image or motion clip")
+                source_path = self._resolve_media_path(project, source_asset.local_path, "media")
+                if source_path is None or not source_path.is_file():
+                    raise ValueError(f"{scene.id} selected media is not a local file")
+                source_type = source_asset.media_type
+
+            duration = max(float(scene.final_duration_seconds or scene.duration_seconds), 0.5)
             end = cursor + duration
-            image_id = f"image-{scene.id}"
+            visual_id = f"visual-{scene.id}"
             assets.append({
-                "id": image_id,
-                "type": "image",
-                "path": str(image_path.resolve()),
-                "source": scene.selected_media.source_url,
+                "id": visual_id,
+                "type": source_type,
+                "path": str(source_path.resolve()),
+                "source": source_asset.source_url if source_asset is not None else "",
             })
-            cuts.append({
+            cut = {
                 "id": scene.id,
-                "source": image_id,
+                "source": visual_id,
                 "in_seconds": cursor,
                 "out_seconds": end,
-                "type": "image",
-                "animation": animations[index % len(animations)],
+                "type": source_type,
+                "animation": "static" if scene.motion_mode == "static" else animations[index % len(animations)],
                 "title": scene.title,
                 "reason": scene.action,
                 "transition_in": "crossfade" if index else "none",
                 "transition_out": "crossfade" if index < len(project.storyboard.scenes) - 1 else "none",
-            })
+            }
+            if scene.subtitle_enabled and scene.subtitle_text.strip():
+                cut["subtitle"] = scene.subtitle_text.strip()
+            cuts.append(cut)
 
             if scene.selected_audio is not None:
                 audio_path = self._resolve_media_path(project, scene.selected_audio.local_path, "audio")
@@ -86,27 +104,24 @@ class OpenMontageIntegration:
                         "type": "audio",
                         "path": str(audio_path.resolve()),
                     })
+                    audio_length = float(scene.audio_duration_seconds or duration)
                     narration_segments.append({
                         "asset_id": audio_id,
                         "start_seconds": cursor,
-                        "end_seconds": end,
+                        "end_seconds": min(end, cursor + max(audio_length, 0.1)),
                     })
             cursor = end
 
         project_slug = f"videogen-{project.id}"
         om_project_dir = (settings.openmontage_root / "projects" / project_slug).resolve()
         workspace = om_project_dir / "hyperframes"
-        output_path = project_store.render_dir(project.id) / f"final-{runtime}.mp4"
-        output_path = output_path.resolve()
+        output_path = (project_store.render_dir(project.id) / f"final-{runtime}.mp4").resolve()
 
         edit_decisions = {
             "render_runtime": runtime,
             "renderer_family": "animation-first",
             "composition_mode": "templated",
             "cuts": cuts,
-            # OpenMontage's HyperFrames adapter expects audio.music to be a mapping
-            # and calls .get() on it. Use an empty object when there is no music
-            # instead of None so narration-only projects render correctly.
             "audio": {"narration": {"segments": narration_segments}, "music": {}},
             "metadata": {
                 "title": project.storyboard.title,
@@ -196,9 +211,6 @@ class OpenMontageIntegration:
         parsed = self._parse_helper_json(text)
 
         if process.returncode != 0:
-            # The helper always prints the ToolResult JSON to stdout before exiting
-            # non-zero. OpenMontage may also log warnings to stderr; do not let a
-            # harmless warning hide the actual validation/render error.
             if parsed is not None:
                 detail = str(parsed.get("error") or f"OpenMontage helper exited {process.returncode}")
                 data = parsed.get("data") or {}
@@ -233,6 +245,7 @@ class OpenMontageIntegration:
         return base
 
     async def render(self, project: Project, runtime: str) -> dict:
+        sync_project(project, save=True)
         job = self.build_job(project, runtime)
         result = await self._run_helper("render", job)
         output = Path(result.get("output") or job["output_path"])
