@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     pexels_api_key: str = ""
     pixabay_api_key: str = ""
 
-    # Image routing: auto | local | local_fast | local_quality | openai
+    # Image routing: auto | local | local_fast | local_quality | local_next | openai
     image_provider: str = "auto"
 
     openai_api_key: str = ""
@@ -41,13 +41,13 @@ class Settings(BaseSettings):
     sd_cpp_offload_to_cpu: bool = True
     sd_cpp_verbose: bool = True
 
-    # Local FAST profile (current FLUX.1-schnell Q2_K)
+    # Local FAST profile (FLUX.1-schnell Q2_K)
     sd_cpp_diffusion_model: Path = Path("")
     sd_cpp_steps: int = 4
     sd_cpp_cfg_scale: float = 1.0
     sd_cpp_sampling_method: str = "euler"
 
-    # Local QUALITY profile. Supports either FLUX-style CLIP/T5 or an --llm encoder (e.g. Z-Image).
+    # Local QUALITY profile (Z-Image-Turbo or another --llm/CLIP+T5 profile)
     sd_cpp_quality_diffusion_model: Path = Path("")
     sd_cpp_quality_steps: int = 8
     sd_cpp_quality_cfg_scale: float = 1.0
@@ -56,6 +56,16 @@ class Settings(BaseSettings):
     sd_cpp_quality_clip_l: Path = Path("")
     sd_cpp_quality_t5xxl: Path = Path("")
     sd_cpp_quality_llm: Path = Path("")
+
+    # Local NEXT profile (FLUX.2 Klein 4B + Qwen3-4B)
+    sd_cpp_next_diffusion_model: Path = Path("")
+    sd_cpp_next_steps: int = 4
+    sd_cpp_next_cfg_scale: float = 1.0
+    sd_cpp_next_sampling_method: str = "euler"
+    sd_cpp_next_vae: Path = Path("")
+    sd_cpp_next_llm: Path = Path("")
+    sd_cpp_next_clip_l: Path = Path("")
+    sd_cpp_next_t5xxl: Path = Path("")
 
     # Legacy compatibility. Ignored when SD_CPP_BACKEND is set.
     sd_cpp_clip_on_cpu: bool = True
