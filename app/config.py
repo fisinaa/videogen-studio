@@ -86,6 +86,21 @@ class Settings(BaseSettings):
     sd_cpp_width_1_1: int = 512
     sd_cpp_height_1_1: int = 512
 
+    # Motion / image-to-video routing.
+    # `command` runs a user-configured local model runner without coupling VideoGen
+    # to a specific backend. The runner must create the requested MP4 output.
+    motion_provider: str = "disabled"  # disabled | command
+    motion_command: str = ""
+    motion_timeout_seconds: int = 3600
+    motion_default_duration_seconds: float = 5.0
+    motion_max_duration_seconds: float = 6.0
+    motion_width_16_9: int = 768
+    motion_height_16_9: int = 432
+    motion_width_9_16: int = 432
+    motion_height_9_16: int = 768
+    motion_width_1_1: int = 512
+    motion_height_1_1: int = 512
+
     # TTS routing: auto | piper | openai
     tts_provider: str = "auto"
 
