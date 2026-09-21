@@ -87,9 +87,9 @@ class Settings(BaseSettings):
     sd_cpp_height_1_1: int = 512
 
     # Motion / image-to-video routing.
-    # `command` runs a user-configured local model runner without coupling VideoGen
-    # to a specific backend. The runner must create the requested MP4 output.
-    motion_provider: str = "disabled"  # disabled | command
+    # openmontage: use OpenMontage VideoSelector and its provider registry.
+    # command: legacy/custom external runner fallback.
+    motion_provider: str = "openmontage"  # disabled | openmontage | command
     motion_command: str = ""
     motion_timeout_seconds: int = 3600
     motion_default_duration_seconds: float = 5.0
@@ -100,6 +100,9 @@ class Settings(BaseSettings):
     motion_height_9_16: int = 768
     motion_width_1_1: int = 512
     motion_height_1_1: int = 512
+    motion_openmontage_preferred_provider: str = "auto"
+    motion_openmontage_runner: Path = Path("./scripts/openmontage_motion.py")
+    motion_openmontage_reserve_gpu: bool = False
 
     # TTS routing: auto | piper | openai
     tts_provider: str = "auto"
