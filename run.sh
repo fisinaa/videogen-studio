@@ -8,6 +8,6 @@ if [[ ! -f .env ]]; then
 fi
 
 exec .venv/bin/uvicorn app.server:app \
-  --host "${VIDEOGEN_HOST:-127.0.0.1}" \
+  --host "${VIDEOGEN_HOST:-0.0.0.0}" \
   --port "${VIDEOGEN_PORT:-8090}" \
   --reload
