@@ -1,15 +1,8 @@
 # Local AI providers
 
-VideoGen routes TTS and image generation between local providers and OpenAI.
+VideoGen routes local LLM, image generation and TTS between several providers and now includes automatic GPU orchestration.
 
-## Modes
-
-```env
-TTS_PROVIDER=auto
-IMAGE_PROVIDER=auto
-```
-
-Image route values:
+## Image modes
 
 ```text
 auto | local | local_fast | local_quality | local_next | openai
@@ -21,17 +14,50 @@ auto | local | local_fast | local_quality | local_next | openai
 Local Next -> Local Quality -> Local Fast -> OpenAI
 ```
 
-The web UI exposes explicit **Local Fast**, **Local Quality**, **Local Next**, and **OpenAI Final** actions per scene.
+The web UI exposes **Local Fast**, **Local Quality**, **Local Next**, and **OpenAI Final** per scene.
 
-## Piper local TTS (CPU)
+## Structured visual prompt builder
 
-Current tested layout:
+The local llama.cpp model now creates production-ready image prompts instead of a single short `VISUAL` line.
+
+Each new scene stores:
 
 ```text
-/opt/piper/venv/bin/piper
-/opt/piper/models/ru_RU-irina-medium.onnx
-/opt/piper/models/ru_RU-irina-medium.onnx.json
+visual_prompt_ru
+visual_prompt_en
+negative_prompt_en
+media_search_query
 ```
+
+`visual_prompt` remains for backward compatibility and mirrors `visual_prompt_en` on newly generated scenes.
+
+The LLM is instructed to explicitly describe:
+
+```text
+main character and stable visual traits
+action
+environment
+key props
+spatial relationships
+camera/framing/composition
+lighting
+mood
+project visual style
+```
+
+The English prompt is intended for local image models and is normally much more detailed than narration. It should not be a literary retelling.
+
+The storyboard UI has **Обновить visual prompt** for rebuilding only these image-generation fields without rewriting narration/action or removing existing media candidates.
+
+Endpoint:
+
+```text
+POST /api/projects/{project_id}/scenes/{scene_id}/visual-prompt/rebuild
+```
+
+Local/OpenAI image generation prefers `visual_prompt_en`. The negative prompt is appended as explicit `Avoid:` guidance.
+
+## Piper local TTS (CPU)
 
 ```env
 TTS_PROVIDER=auto
@@ -40,7 +66,7 @@ PIPER_MODEL=/opt/piper/models/ru_RU-irina-medium.onnx
 PIPER_TIMEOUT_SECONDS=120
 ```
 
-Piper runs on CPU and leaves the GTX 1660 free for image/LLM work.
+Piper runs on CPU.
 
 ## Shared stable-diffusion.cpp runtime
 
@@ -56,8 +82,6 @@ SD_CPP_VERBOSE=true
 ```
 
 ## Local Fast
-
-Tested baseline:
 
 ```text
 FLUX.1-schnell Q2_K
@@ -76,8 +100,6 @@ SD_CPP_SAMPLING_METHOD=euler
 ```
 
 ## Local Quality
-
-Current quality candidate:
 
 ```text
 Z-Image-Turbo Q3_K
@@ -99,8 +121,6 @@ SD_CPP_QUALITY_SAMPLING_METHOD=euler
 
 ## Local Next
 
-Experimental newer profile:
-
 ```text
 FLUX.2 Klein 4B Q4_0
 Qwen3-4B Q4_K_M text encoder
@@ -120,7 +140,7 @@ SD_CPP_NEXT_CFG_SCALE=1.0
 SD_CPP_NEXT_SAMPLING_METHOD=euler
 ```
 
-Download sources used for this profile:
+Download sources:
 
 ```text
 Diffusion GGUF: leejet/FLUX.2-klein-4B-GGUF
@@ -128,7 +148,67 @@ Text encoder:    unsloth/Qwen3-4B-GGUF
 VAE/decoder:     black-forest-labs/FLUX.2-small-decoder
 ```
 
-FLUX.2 reference generation uses its native `-r` reference input when Character Reference is enabled, instead of the older img2img `-i` path.
+FLUX.2 reference generation uses native `-r` when Character Reference is enabled. Older local profiles retain the conservative img2img path.
+
+## Automatic GPU/model orchestration
+
+VideoGen now has `app/services/model_orchestrator.py`.
+
+When orchestration is enabled, the local image flow becomes:
+
+```text
+LLM/text request
+  -> ensure videogen-llama.service is running
+
+Local image request
+  -> acquire image/GPU lock
+  -> stop videogen-llama.service
+  -> run stable-diffusion.cpp
+  -> restart videogen-llama.service
+  -> release lock
+```
+
+This prevents llama.cpp and the image model from competing for the GTX 1660 6 GB VRAM.
+
+VideoGen uses a fixed user-level systemd unit instead of arbitrary shell commands from `.env`.
+
+Example unit is committed at:
+
+```text
+deploy/systemd/videogen-llama.service.example
+```
+
+Install it:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/systemd/videogen-llama.service.example ~/.config/systemd/user/videogen-llama.service
+systemctl --user daemon-reload
+systemctl --user enable --now videogen-llama.service
+systemctl --user status videogen-llama.service
+```
+
+Then enable orchestration in the real `.env`:
+
+```env
+MODEL_ORCHESTRATION_ENABLED=true
+LLM_SYSTEMD_UNIT=videogen-llama.service
+LLM_RESTART_AFTER_IMAGE=true
+LLM_START_TIMEOUT_SECONDS=90
+LLM_STOP_TIMEOUT_SECONDS=30
+GPU_LOCK_FILE=/tmp/videogen-gpu.lock
+```
+
+`/api/health` reports orchestration state:
+
+```text
+orchestrator.enabled
+orchestrator.llm_active
+orchestrator.gpu_busy
+orchestrator.current_job
+```
+
+Important: do not set `MODEL_ORCHESTRATION_ENABLED=true` until the user systemd unit is installed and works.
 
 ## Scene image gallery
 
@@ -151,18 +231,4 @@ OpenAI Final
   Character Reference = ON when available
 ```
 
-For Local Next you can manually enable Character Reference to test FLUX.2 native reference conditioning.
-
-## Recommended runtime layout
-
-```text
-CPU:
-  Piper TTS
-  FFmpeg
-  image text encoders where possible
-
-GPU:
-  llama.cpp OR stable-diffusion.cpp
-```
-
-On a 6 GB GPU, schedule llama.cpp and local image generation rather than keeping both resident. A GPU resource manager can automate stop/start of llama-server around local image jobs later.
+For Local Next, Character Reference can be enabled manually to test FLUX.2 native reference conditioning.
