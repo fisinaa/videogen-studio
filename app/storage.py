@@ -1,5 +1,6 @@
 import json
 import re
+import shutil
 from pathlib import Path
 
 from app.config import settings
@@ -48,7 +49,6 @@ class ProjectStore:
     def save(self, project: Project) -> Path:
         project_dir = self._project_dir(project.id)
         project_dir.mkdir(parents=True, exist_ok=True)
-
         output = self._project_path(project.id)
         output.write_text(
             json.dumps(project.model_dump(), ensure_ascii=False, indent=2),
@@ -68,6 +68,17 @@ class ProjectStore:
             return Project.model_validate(data)
         except (OSError, json.JSONDecodeError, ValueError):
             return None
+
+    def delete(self, project_id: str) -> bool:
+        """Permanently delete the complete project directory and all generated assets."""
+        try:
+            project_dir = self._project_dir(project_id)
+        except ValueError:
+            return False
+        if not project_dir.is_dir():
+            return False
+        shutil.rmtree(project_dir)
+        return True
 
     def list_projects(self) -> list[dict]:
         result: list[dict] = []
