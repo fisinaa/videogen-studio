@@ -1,6 +1,6 @@
 # Local AI providers
 
-VideoGen routes local LLM, image generation and TTS between several providers and now includes automatic GPU orchestration.
+VideoGen routes local LLM, image generation and TTS between several providers and includes automatic GPU orchestration.
 
 ## Image modes
 
@@ -18,9 +18,9 @@ The web UI exposes **Local Fast**, **Local Quality**, **Local Next**, and **Open
 
 ## Structured visual prompt builder
 
-The local llama.cpp model now creates production-ready image prompts instead of a single short `VISUAL` line.
+The local llama.cpp model creates production-ready image prompts instead of a single short `VISUAL` line.
 
-Each new scene stores:
+Each scene stores:
 
 ```text
 visual_prompt_ru
@@ -45,17 +45,56 @@ mood
 project visual style
 ```
 
-The English prompt is intended for local image models and is normally much more detailed than narration. It should not be a literary retelling.
+The storyboard UI has **Обновить visual prompt** for rebuilding only the image-generation fields without rewriting narration/action or removing existing media candidates.
 
-The storyboard UI has **Обновить visual prompt** for rebuilding only these image-generation fields without rewriting narration/action or removing existing media candidates.
-
-Endpoint:
+Endpoints:
 
 ```text
 POST /api/projects/{project_id}/scenes/{scene_id}/visual-prompt/rebuild
+POST /api/projects/{project_id}/visual-prompts/rebuild-all
 ```
 
 Local/OpenAI image generation prefers `visual_prompt_en`. The negative prompt is appended as explicit `Avoid:` guidance.
+
+## Visual Bible / continuity
+
+Projects now keep a `storyboard.visual_bible` with:
+
+```text
+canonical project visual style
+canonical character descriptions
+continuity rules for colors, proportions, clothing and distinctive traits
+recurring-location / recurring-prop consistency rules
+```
+
+Old projects receive a Visual Bible automatically when loaded. The image-generation prompt receives this continuity context so scene prompts do not drift as easily.
+
+## Prepare All workflow
+
+The UI now has **Prepare All**. It performs:
+
+```text
+1. rebuild visual prompts for every scene with the local LLM
+2. generate one new local image candidate for every scene
+3. generate missing narration audio
+```
+
+The preferred image profile is:
+
+```text
+Local Next, if configured
+otherwise Local Quality
+otherwise Local Fast
+```
+
+The generated images are added to `media_candidates`; existing selected images are not blindly overwritten.
+
+Batch endpoints:
+
+```text
+POST /api/projects/{project_id}/media/generate-batch?provider=local_next
+POST /api/projects/{project_id}/audio/generate-missing
+```
 
 ## Piper local TTS (CPU)
 
@@ -152,27 +191,34 @@ FLUX.2 reference generation uses native `-r` when Character Reference is enabled
 
 ## Automatic GPU/model orchestration
 
-VideoGen now has `app/services/model_orchestrator.py`.
+VideoGen uses `app/services/model_orchestrator.py`.
 
-When orchestration is enabled, the local image flow becomes:
+Single local-image request:
 
 ```text
-LLM/text request
-  -> ensure videogen-llama.service is running
-
-Local image request
-  -> acquire image/GPU lock
-  -> stop videogen-llama.service
-  -> run stable-diffusion.cpp
-  -> restart videogen-llama.service
-  -> release lock
+acquire GPU lock
+stop videogen-llama.service
+run stable-diffusion.cpp
+restart videogen-llama.service
+release lock
 ```
 
-This prevents llama.cpp and the image model from competing for the GTX 1660 6 GB VRAM.
+Batch local-image request:
 
-VideoGen uses a fixed user-level systemd unit instead of arbitrary shell commands from `.env`.
+```text
+acquire GPU lock once
+stop videogen-llama.service once
+scene 1 image
+scene 2 image
+...
+scene N image
+restart videogen-llama.service once
+release lock
+```
 
-Example unit is committed at:
+This avoids repeatedly loading/unloading llama.cpp between scenes and prevents the LLM and image model from competing for the GTX 1660 VRAM.
+
+Example unit:
 
 ```text
 deploy/systemd/videogen-llama.service.example
@@ -199,16 +245,15 @@ LLM_STOP_TIMEOUT_SECONDS=30
 GPU_LOCK_FILE=/tmp/videogen-gpu.lock
 ```
 
-`/api/health` reports orchestration state:
+`/api/health` reports:
 
 ```text
 orchestrator.enabled
 orchestrator.llm_active
 orchestrator.gpu_busy
 orchestrator.current_job
+orchestrator.image_batch_profile
 ```
-
-Important: do not set `MODEL_ORCHESTRATION_ENABLED=true` until the user systemd unit is installed and works.
 
 ## Scene image gallery
 
@@ -232,3 +277,15 @@ OpenAI Final
 ```
 
 For Local Next, Character Reference can be enabled manually to test FLUX.2 native reference conditioning.
+
+## Permanent project deletion
+
+The UI now has **Удалить проект совсем** and a delete button in the recent-project list.
+
+Endpoint:
+
+```text
+DELETE /api/projects/{project_id}
+```
+
+This permanently removes the whole project directory, including `project.json`, generated images and audio. The action is intentionally confirmed in the UI and cannot be undone.
