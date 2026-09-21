@@ -211,7 +211,7 @@ class OpenMontageIntegration:
             **result,
             "runtime": runtime,
             "output": str(output),
-            "download_url": f"/api/projects/{project.id}/renders/{filename}",
+            "download_url": f"/api/openmontage/projects/{project.id}/renders/{filename}",
             "filename": filename,
         }
 
