@@ -104,7 +104,10 @@ class OpenMontageIntegration:
             "renderer_family": "animation-first",
             "composition_mode": "templated",
             "cuts": cuts,
-            "audio": {"narration": {"segments": narration_segments}, "music": None},
+            # OpenMontage's HyperFrames adapter expects audio.music to be a mapping
+            # and calls .get() on it. Use an empty object when there is no music
+            # instead of None so narration-only projects render correctly.
+            "audio": {"narration": {"segments": narration_segments}, "music": {}},
             "metadata": {
                 "title": project.storyboard.title,
                 "visual_style": project.storyboard.visual_style,
