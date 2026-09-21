@@ -21,11 +21,7 @@ llm = LlamaCppProvider()
 
 
 def _image_dimensions(aspect_ratio: str) -> tuple[int, int]:
-    return {
-        "16:9": (1536, 1024),
-        "9:16": (1024, 1536),
-        "1:1": (1024, 1024),
-    }.get(aspect_ratio, (1536, 1024))
+    return {"16:9": (1536, 1024), "9:16": (1024, 1536), "1:1": (1024, 1024)}.get(aspect_ratio, (1536, 1024))
 
 
 def _local_image_dimensions(aspect_ratio: str) -> tuple[int, int]:
@@ -50,20 +46,7 @@ def _asset_from_generated_file(project: Project, scene_id: str, path: Path) -> M
         author = "local"
         label = f"Recovered local image · {scene_id}"
     local_url = f"/api/projects/{project.id}/media/{path.name}"
-    return MediaAsset(
-        provider=provider,
-        asset_id=path.name,
-        media_type="image",
-        preview_url=local_url,
-        source_url=source_url,
-        download_url=local_url,
-        width=width,
-        height=height,
-        duration_seconds=None,
-        author=author,
-        label=label,
-        local_path=f"media/{path.name}",
-    )
+    return MediaAsset(provider=provider, asset_id=path.name, media_type="image", preview_url=local_url, source_url=source_url, download_url=local_url, width=width, height=height, duration_seconds=None, author=author, label=label, local_path=f"media/{path.name}")
 
 
 def _append_candidate(scene, asset: MediaAsset):
@@ -86,7 +69,6 @@ def _recover_generated_media(project: Project) -> int:
             if not any(x.asset_id == scene.selected_media.asset_id for x in updated.media_candidates):
                 updated = _append_candidate(updated, scene.selected_media)
                 changed = True
-
         files = []
         files.extend(path for path in media_dir.glob(f"{scene.id}-openai-*.png") if path.is_file())
         files.extend(path for path in media_dir.glob(f"{scene.id}-local-*.png") if path.is_file())
@@ -128,39 +110,17 @@ def _scene_speech_text(scene) -> str:
 async def index(request: Request):
     tts_status = tts_router.status()
     media_status = media_router.status()
-    return templates.TemplateResponse(
-        request=request,
-        name="index.html",
-        context={
-            "projects": project_store.list_projects()[:10],
-            "llm_url": settings.llm_base_url,
-            "media_status": media_status,
-            "tts_enabled": bool(tts_status["piper"] or tts_status["openai"]),
-            "tts_voice": settings.openai_tts_voice,
-            "tts_status": tts_status,
-        },
-    )
+    return templates.TemplateResponse(request=request, name="index.html", context={"projects": project_store.list_projects()[:10], "llm_url": settings.llm_base_url, "media_status": media_status, "tts_enabled": bool(tts_status["piper"] or tts_status["openai"]), "tts_voice": settings.openai_tts_voice, "tts_status": tts_status})
 
 
 @app.get("/api/health")
 async def health():
-    return {
-        "status": "ok",
-        "llm_provider": settings.llm_provider,
-        "llm_url": settings.llm_base_url,
-        "media_providers": media_router.status(),
-        "tts": tts_router.status(),
-        "orchestrator": await model_orchestrator.status(),
-    }
+    return {"status": "ok", "llm_provider": settings.llm_provider, "llm_url": settings.llm_base_url, "media_providers": media_router.status(), "tts": tts_router.status(), "orchestrator": await model_orchestrator.status()}
 
 
 @app.get("/api/media/status")
 async def media_status():
-    return {
-        "media": media_router.status(),
-        "tts": tts_router.status(),
-        "orchestrator": await model_orchestrator.status(),
-    }
+    return {"media": media_router.status(), "tts": tts_router.status(), "orchestrator": await model_orchestrator.status()}
 
 
 @app.get("/api/projects")
@@ -221,24 +181,10 @@ async def generate_character_reference(project_id: str):
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     characters = "; ".join(project.storyboard.characters).strip() or "the main recurring character described by the project story"
-    prompt = (
-        "Create a clean character reference image for a recurring animated character.\n"
-        f"Character description: {characters}\n"
-        f"Project visual style: {project.storyboard.visual_style}\n"
-        "Show the main character clearly, full body, neutral standing pose, simple uncluttered background, "
-        "readable silhouette, consistent proportions, colors, face, clothing and distinctive features. "
-        "Do not include captions, labels, text, watermark, extra characters or a grid."
-    )
+    prompt = "\n".join(["Create a clean character reference image for a recurring animated character.", f"Character description: {characters}", f"Project visual style: {project.storyboard.visual_style}", "Show the main character clearly, full body, neutral standing pose, simple uncluttered background, readable silhouette, consistent proportions, colors, face, clothing and distinctive features. Do not include captions, labels, text, watermark, extra characters or a grid."])
     provider = "openai" if media_router.openai_image.enabled else "local_fast"
     try:
-        asset = await media_router.generate_image(
-            prompt=prompt,
-            aspect_ratio="1:1",
-            project_id=project.id,
-            scene_id="character-reference",
-            media_dir=project_store.media_dir(project.id),
-            provider=provider,
-        )
+        asset = await media_router.generate_image(prompt=prompt, aspect_ratio="1:1", project_id=project.id, scene_id="character-reference", media_dir=project_store.media_dir(project.id), provider=provider)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Character reference generation failed: {_error_detail(exc)}") from exc
     project.character_reference = asset
@@ -255,21 +201,19 @@ async def update_scene(project_id: str, scene_id: str, payload: SceneUpdate):
         if scene.id != scene_id:
             continue
         speech_changed = scene.narration != payload.narration or scene.dialogue != payload.dialogue
-        project.storyboard.scenes[index] = scene.model_copy(
-            update={
-                "title": payload.title,
-                "duration_seconds": payload.duration_seconds,
-                "narration": payload.narration,
-                "dialogue": payload.dialogue,
-                "action": payload.action,
-                "visual_prompt": payload.visual_prompt,
-                "visual_prompt_ru": payload.visual_prompt_ru,
-                "visual_prompt_en": payload.visual_prompt_en,
-                "negative_prompt_en": payload.negative_prompt_en,
-                "media_search_query": payload.media_search_query,
-                "selected_audio": None if speech_changed else scene.selected_audio,
-            }
-        )
+        project.storyboard.scenes[index] = scene.model_copy(update={
+            "title": payload.title,
+            "duration_seconds": payload.duration_seconds,
+            "narration": payload.narration,
+            "dialogue": payload.dialogue,
+            "action": payload.action,
+            "visual_prompt": payload.visual_prompt,
+            "visual_prompt_ru": scene.visual_prompt_ru if payload.visual_prompt_ru is None else payload.visual_prompt_ru,
+            "visual_prompt_en": scene.visual_prompt_en if payload.visual_prompt_en is None else payload.visual_prompt_en,
+            "negative_prompt_en": scene.negative_prompt_en if payload.negative_prompt_en is None else payload.negative_prompt_en,
+            "media_search_query": payload.media_search_query,
+            "selected_audio": None if speech_changed else scene.selected_audio,
+        })
         project_store.save(project)
         return project
     raise HTTPException(status_code=404, detail="Scene not found")
@@ -336,12 +280,7 @@ async def search_scene_media(project_id: str, scene_id: str, query: str | None =
 
 
 @app.post("/api/projects/{project_id}/scenes/{scene_id}/media/generate-ai")
-async def generate_scene_ai_media(
-    project_id: str,
-    scene_id: str,
-    provider: str = Query(default="auto", pattern="^(auto|local|local_fast|local_quality|local_next|openai)$"),
-    use_reference: bool | None = Query(default=None),
-):
+async def generate_scene_ai_media(project_id: str, scene_id: str, provider: str = Query(default="auto", pattern="^(auto|local|local_fast|local_quality|local_next|openai)$"), use_reference: bool | None = Query(default=None)):
     project = project_store.load(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -351,11 +290,9 @@ async def generate_scene_ai_media(
     if use_reference is None:
         use_reference = provider == "openai"
     reference_path = _character_reference_path(project) if use_reference else None
-
     base_prompt = (scene.visual_prompt_en or scene.visual_prompt).strip()
     if not base_prompt:
         raise HTTPException(status_code=400, detail="Scene visual prompt is empty")
-
     prompt_parts = [base_prompt]
     if not scene.visual_prompt_en:
         characters = "; ".join(project.storyboard.characters)
@@ -364,25 +301,13 @@ async def generate_scene_ai_media(
         if characters:
             prompt_parts.append(f"Canonical characters: {characters}")
     if reference_path is not None:
-        prompt_parts.append(
-            "The attached image is the canonical character reference. Preserve identity, face, body proportions, "
-            "colors, clothing and distinctive features while following the requested composition and action."
-        )
+        prompt_parts.append("The attached image is the canonical character reference. Preserve identity, face, body proportions, colors, clothing and distinctive features while following the requested composition and action.")
     if scene.negative_prompt_en.strip():
         prompt_parts.append(f"Avoid: {scene.negative_prompt_en.strip()}")
     prompt_parts.append("No captions, no text, no watermark.")
     prompt = "\n".join(part for part in prompt_parts if part)
-
     try:
-        asset = await media_router.generate_image(
-            prompt=prompt,
-            aspect_ratio=project.request.aspect_ratio,
-            project_id=project.id,
-            scene_id=scene.id,
-            media_dir=project_store.media_dir(project.id),
-            reference_path=reference_path,
-            provider=provider,
-        )
+        asset = await media_router.generate_image(prompt=prompt, aspect_ratio=project.request.aspect_ratio, project_id=project.id, scene_id=scene.id, media_dir=project_store.media_dir(project.id), reference_path=reference_path, provider=provider)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Image generation failed: {_error_detail(exc)}") from exc
     for index, item in enumerate(project.storyboard.scenes):
@@ -458,12 +383,7 @@ async def generate_scene_audio(project_id: str, scene_id: str):
     if not speech_text:
         raise HTTPException(status_code=400, detail="Scene has no narration or dialogue to synthesize")
     try:
-        asset = await tts_router.generate(
-            text=speech_text,
-            project_id=project.id,
-            scene_id=scene.id,
-            audio_dir=project_store.audio_dir(project.id),
-        )
+        asset = await tts_router.generate(text=speech_text, project_id=project.id, scene_id=scene.id, audio_dir=project_store.audio_dir(project.id))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"TTS generation failed: {_error_detail(exc)}") from exc
     for index, item in enumerate(project.storyboard.scenes):
