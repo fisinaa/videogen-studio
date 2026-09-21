@@ -20,6 +20,12 @@ async def videogen_enhancements_js():
     return active?.dataset?.projectId || null;
   }
 
+  function setRenderButtonState(button, runtime, hasExisting) {
+    const label = runtime === 'hyperframes' ? 'HyperFrames' : 'Remotion';
+    button.textContent = hasExisting ? `Перерендерить ${label}` : `Рендер ${label}`;
+    button.dataset.hasExisting = hasExisting ? '1' : '0';
+  }
+
   function ensurePanel() {
     const actions = document.querySelector('.project-actions');
     if (!actions || actions.querySelector('.render-hyperframes')) return;
@@ -27,14 +33,14 @@ async def videogen_enhancements_js():
     const hf = document.createElement('button');
     hf.type = 'button';
     hf.className = 'render-hyperframes';
-    hf.textContent = 'Рендер HyperFrames';
     hf.style.background = '#7b3f98';
+    setRenderButtonState(hf, 'hyperframes', false);
 
     const remotion = document.createElement('button');
     remotion.type = 'button';
     remotion.className = 'render-remotion';
-    remotion.textContent = 'Рендер Remotion';
     remotion.style.background = '#3b5f9b';
+    setRenderButtonState(remotion, 'remotion', false);
 
     const wrap = document.createElement('div');
     wrap.className = 'videogen-render-panel';
@@ -46,18 +52,26 @@ async def videogen_enhancements_js():
 
     hf.addEventListener('click', () => runRender('hyperframes', hf, remotion, wrap));
     remotion.addEventListener('click', () => runRender('remotion', hf, remotion, wrap));
-    loadExisting(wrap);
+    loadExisting(wrap, hf, remotion);
   }
 
-  async function loadExisting(panel) {
+  async function loadExisting(panel, hf, remotion) {
     const id = projectId();
     if (!id) return;
     try {
       const response = await fetch(`/api/openmontage/projects/${encodeURIComponent(id)}/renders`, {cache:'no-store'});
       if (!response.ok) return;
       const data = await response.json();
-      const first = data.renders?.[0];
-      if (first) showVideo(panel, first.download_url, first.filename);
+      const renders = data.renders || [];
+      const hyperframes = renders.find(item => String(item.filename || '').includes('hyperframes'));
+      const remotionRender = renders.find(item => String(item.filename || '').includes('remotion'));
+      setRenderButtonState(hf, 'hyperframes', Boolean(hyperframes));
+      setRenderButtonState(remotion, 'remotion', Boolean(remotionRender));
+      const first = renders[0];
+      if (first) {
+        panel.querySelector('.render-state').textContent = 'Есть готовый рендер. После изменений можно запустить перерендер — файл будет обновлён.';
+        showVideo(panel, first.download_url, first.filename);
+      }
     } catch (_) {}
   }
 
@@ -76,10 +90,13 @@ async def videogen_enhancements_js():
       return;
     }
 
+    const isRerender = button.dataset.hasExisting === '1';
     button.disabled = true;
     otherButton.disabled = true;
     state.style.color = '';
-    state.textContent = 'Синхронизация таймингов по озвучке...';
+    state.textContent = isRerender
+      ? 'Синхронизация изменений перед перерендером...'
+      : 'Синхронизация таймингов по озвучке...';
     try {
       const sync = await fetch(`/api/production/projects/${encodeURIComponent(id)}/sync`, {method:'POST'});
       if (!sync.ok) {
@@ -87,13 +104,14 @@ async def videogen_enhancements_js():
         throw new Error(err.detail || `sync HTTP ${sync.status}`);
       }
 
-      state.textContent = `Рендер ${runtime} запущен. Это может занять несколько минут...`;
+      state.textContent = `${isRerender ? 'Перерендер' : 'Рендер'} ${runtime} запущен. Это может занять несколько минут...`;
       const response = await fetch(`/api/openmontage/projects/${encodeURIComponent(id)}/render?runtime=${encodeURIComponent(runtime)}`, {method:'POST'});
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || `render HTTP ${response.status}`);
 
       state.textContent = `Готово: ${data.filename || 'MP4'}`;
       state.style.color = '#8ee59a';
+      setRenderButtonState(button, runtime, true);
       if (data.download_url) showVideo(panel, data.download_url, data.filename);
     } catch (error) {
       state.textContent = `Ошибка рендера: ${error.message || error}`;
