@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import json
+import mimetypes
 import os
 import shutil
 import sys
@@ -25,6 +27,44 @@ def _status_value(tool) -> str:
         return getattr(status, "value", str(status))
     except Exception as exc:
         return f"error:{exc}"
+
+
+def _install_openai_video_reference_compat() -> None:
+    """Adapt OpenMontage's Sora data-URI payload to current openai-python.
+
+    OpenMontage's sora_video currently passes input_reference as
+    {"image_url": "data:..."}. Recent openai-python video uploads validate the
+    field as an upload value before request serialization, so that dict is
+    rejected. Convert only that exact data-URI shape into a normal multipart
+    file tuple. All other payloads are left untouched.
+    """
+    try:
+        from openai.resources.videos import Videos
+    except Exception:
+        return
+
+    if getattr(Videos.create_and_poll, "_videogen_reference_compat", False):
+        return
+
+    original = Videos.create_and_poll
+
+    def create_and_poll_compat(self, *args, **kwargs):
+        reference = kwargs.get("input_reference")
+        if isinstance(reference, dict):
+            data_uri = reference.get("image_url")
+            if isinstance(data_uri, str) and data_uri.startswith("data:") and ";base64," in data_uri:
+                header, encoded = data_uri.split(",", 1)
+                mime_type = header[5:].split(";", 1)[0] or "application/octet-stream"
+                extension = mimetypes.guess_extension(mime_type) or ".bin"
+                try:
+                    contents = base64.b64decode(encoded, validate=True)
+                except Exception as exc:
+                    raise ValueError(f"Invalid Sora input_reference data URI: {exc}") from exc
+                kwargs["input_reference"] = (f"reference{extension}", contents, mime_type)
+        return original(self, *args, **kwargs)
+
+    create_and_poll_compat._videogen_reference_compat = True
+    Videos.create_and_poll = create_and_poll_compat
 
 
 def status() -> int:
@@ -57,6 +97,7 @@ def status() -> int:
 
 def generate(job: dict) -> int:
     _load_openmontage()
+    _install_openai_video_reference_compat()
     from tools.video.video_selector import VideoSelector
 
     reference = Path(job["reference_image_path"]).expanduser().resolve()
