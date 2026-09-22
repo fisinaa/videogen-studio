@@ -6,6 +6,7 @@ import json
 import mimetypes
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -56,9 +57,6 @@ def _resize_reference_for_sora(contents: bytes, size: str | None) -> tuple[bytes
                 image.convert("RGB").save(output, format="PNG")
                 return output.getvalue(), "image/png", ".png"
 
-            # ImageOps.fit keeps the requested aspect ratio exact. In the usual
-            # VideoGen case (768x432 -> 1280x720) this is just a high-quality
-            # resize with no crop because both images are 16:9.
             fitted = ImageOps.fit(
                 image.convert("RGB"),
                 target,
@@ -69,22 +67,11 @@ def _resize_reference_for_sora(contents: bytes, size: str | None) -> tuple[bytes
             fitted.save(output, format="PNG")
             return output.getvalue(), "image/png", ".png"
     except Exception:
-        # Let the API surface the original validation error rather than hiding
-        # an unrelated Pillow/format problem inside the compatibility shim.
         return contents, "application/octet-stream", ".bin"
 
 
 def _install_openai_video_reference_compat() -> None:
-    """Adapt OpenMontage's Sora data-URI payload to current openai-python.
-
-    OpenMontage's sora_video currently passes input_reference as
-    {"image_url": "data:..."}. Recent openai-python video uploads validate the
-    field as an upload value before request serialization, so that dict is
-    rejected. Convert only that exact data-URI shape into a normal multipart
-    file tuple. Sora also requires the reference image dimensions to match the
-    requested video size exactly, so resize the upload in-memory when needed.
-    All other payloads are left untouched.
-    """
+    """Adapt OpenMontage's Sora data-URI payload to current openai-python."""
     try:
         from openai.resources.videos import Videos
     except Exception:
@@ -122,6 +109,72 @@ def _install_openai_video_reference_compat() -> None:
 
     create_and_poll_compat._videogen_reference_compat = True
     Videos.create_and_poll = create_and_poll_compat
+
+
+def _sora_native_duration(seconds: int) -> int:
+    """Sora currently accepts only 4, 8 or 12 seconds.
+
+    Generate the smallest native clip that fully covers the requested target;
+    VideoGen trims it afterwards when an exact intermediate duration is needed.
+    """
+    if seconds <= 4:
+        return 4
+    if seconds <= 8:
+        return 8
+    return 12
+
+
+def _sora_is_effective_provider(preferred_provider: str) -> bool:
+    preferred = preferred_provider.strip().lower()
+    if preferred in {"openai", "sora", "sora_video"}:
+        return True
+    if preferred != "auto":
+        return False
+
+    try:
+        from tools.tool_registry import registry
+
+        registry.ensure_discovered()
+        available = []
+        for tool in registry.get_by_capability("video_generation"):
+            if tool.name == "video_selector":
+                continue
+            capabilities = list(getattr(tool, "capabilities", []) or [])
+            if "image_to_video" not in capabilities:
+                continue
+            if _status_value(tool) == "available":
+                available.append(tool)
+        return len(available) == 1 and available[0].name == "sora_video"
+    except Exception:
+        return False
+
+
+def _trim_video(output: Path, target_seconds: int) -> None:
+    """Trim a provider-native clip to the requested VideoGen duration."""
+    trimmed = output.with_name(f"{output.stem}-trimmed{output.suffix}")
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(output),
+        "-t",
+        str(target_seconds),
+        "-map",
+        "0",
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        str(trimmed),
+    ]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0 or not trimmed.is_file() or trimmed.stat().st_size == 0:
+        trimmed.unlink(missing_ok=True)
+        raise RuntimeError(f"Failed to trim motion clip to {target_seconds}s: {result.stderr.strip()}")
+    trimmed.replace(output)
 
 
 def status() -> int:
@@ -163,14 +216,19 @@ def generate(job: dict) -> int:
         raise RuntimeError(f"Reference image not found: {reference}")
     output.parent.mkdir(parents=True, exist_ok=True)
 
+    requested_duration = max(1, int(round(float(job.get("duration") or 10))))
+    preferred_provider = str(job.get("preferred_provider") or "auto")
+    sora_expected = _sora_is_effective_provider(preferred_provider)
+    provider_duration = _sora_native_duration(requested_duration) if sora_expected else requested_duration
+
     inputs = {
         "operation": "image_to_video",
         "prompt": str(job["prompt"]),
         "reference_image_path": str(reference),
         "aspect_ratio": str(job.get("aspect_ratio") or "16:9"),
-        "duration": str(job.get("duration") or "4"),
+        "duration": str(provider_duration),
         "output_path": str(output),
-        "preferred_provider": str(job.get("preferred_provider") or "auto"),
+        "preferred_provider": preferred_provider,
     }
 
     result = VideoSelector().execute(inputs)
@@ -206,9 +264,16 @@ def generate(job: dict) -> int:
         _json(payload)
         return 2
 
+    selected_provider = data.get("selected_provider") or data.get("provider")
+    selected_tool = data.get("selected_tool")
+    if selected_provider == "openai" and provider_duration > requested_duration:
+        _trim_video(output, requested_duration)
+
     payload["output"] = str(output)
-    payload["selected_provider"] = data.get("selected_provider") or data.get("provider")
-    payload["selected_tool"] = data.get("selected_tool")
+    payload["selected_provider"] = selected_provider
+    payload["selected_tool"] = selected_tool
+    payload["requested_duration_seconds"] = requested_duration
+    payload["provider_duration_seconds"] = provider_duration
     _json(payload)
     return 0
 
