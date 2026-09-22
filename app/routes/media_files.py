@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
-from app.schemas import AudioAsset, MediaAsset
+from app.schemas import AudioAsset, MediaAsset, Project
 from app.services.production import probe_duration
 from app.storage import project_store
 
@@ -86,10 +86,7 @@ async def upload_scene_file(project_id: str, scene_id: str, file: UploadFile = F
             local_path=f"audio/{filename}",
         )
         project.storyboard.scenes[scene_index] = scene.model_copy(
-            update={
-                "selected_audio": asset,
-                "audio_duration_seconds": duration,
-            }
+            update={"selected_audio": asset, "audio_duration_seconds": duration}
         )
     else:
         duration = probe_duration(target) if kind == "video" else None
@@ -109,28 +106,14 @@ async def upload_scene_file(project_id: str, scene_id: str, file: UploadFile = F
         candidates = list(scene.media_candidates)
         candidates.append(asset)
         project.storyboard.scenes[scene_index] = scene.model_copy(
-            update={
-                "media_candidates": candidates,
-                "selected_media": scene.selected_media or asset,
-            }
+            update={"media_candidates": candidates, "selected_media": scene.selected_media or asset}
         )
 
     project_store.save(project)
     return {"project": project, "asset": asset, "kind": kind, "size": size}
 
 
-@router.delete("/{project_id}/files/{filename}")
-async def hard_delete_project_file(project_id: str, filename: str):
-    project = project_store.load(project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    media_path = project_store.media_file(project_id, filename)
-    audio_path = project_store.audio_file(project_id, filename)
-    path = media_path or audio_path
-    if path is None:
-        raise HTTPException(status_code=404, detail="Project file not found")
-
+def _clear_file_references(project: Project, filename: str) -> int:
     changed_refs = 0
     for index, scene in enumerate(project.storyboard.scenes):
         media_candidates = [item for item in scene.media_candidates if item.asset_id != filename]
@@ -169,12 +152,49 @@ async def hard_delete_project_file(project_id: str, filename: str):
         project.character_reference = None
         changed_refs += 1
 
+    refs = [ref for ref in project.series_references if ref.asset.asset_id != filename]
+    changed_refs += len(project.series_references) - len(refs)
+    project.series_references = refs
+    return changed_refs
+
+
+@router.delete("/{project_id}/files/{filename}")
+async def hard_delete_project_file(project_id: str, filename: str):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    media_path = project_store.media_file(project_id, filename)
+    audio_path = project_store.audio_file(project_id, filename)
+    path = media_path or audio_path
+    if path is None:
+        raise HTTPException(status_code=404, detail="Project file not found")
+
+    changed_refs = _clear_file_references(project, filename)
+
+    # If this is the series root, child episodes contain shared copies of the
+    # same continuity metadata. Clear those references as well before deleting.
+    series_root_id = project.id if project.series_id == project.id or project.request.project_type == "series" else None
+    children: list[Project] = []
+    if series_root_id:
+        for raw in project_store.list_projects():
+            try:
+                item = Project.model_validate(raw)
+            except Exception:
+                continue
+            if item.id != project.id and item.series_id == series_root_id:
+                changed_refs += _clear_file_references(item, filename)
+                children.append(item)
+
     try:
         path.unlink()
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"File deletion failed: {exc}") from exc
 
     project_store.save(project)
+    for child in children:
+        project_store.save(child)
+
     return {
         "deleted": True,
         "filename": filename,
