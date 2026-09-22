@@ -9,6 +9,47 @@ from app.storage import project_store
 router = APIRouter(prefix="/api/motion", tags=["motion"])
 
 
+def _decorate_motion_asset(asset):
+    """Persist useful generation metadata in the existing MediaAsset fields.
+
+    MediaAsset already has provider/author/label, so older saved projects remain
+    compatible without a schema migration. The UI already renders label for each
+    motion candidate, which makes these details visible immediately.
+    """
+    runtime = motion_service.runtime_status()
+    provider = str(runtime.get("selected_provider") or asset.author or "unknown")
+    tool = str(runtime.get("selected_tool") or "")
+    elapsed = float(runtime.get("elapsed_seconds") or 0.0)
+    model = ""
+    estimated_cost = None
+
+    if tool == "sora_video":
+        model = "sora-2"
+        seconds = float(asset.duration_seconds or 4.0)
+        # OpenMontage's Sora provider currently exposes a placeholder estimate of
+        # $0.50 per 4 seconds. Keep the UI explicit that this is an estimate.
+        estimated_cost = 0.50 * (seconds / 4.0)
+    elif tool:
+        model = tool
+
+    parts = ["AI motion", provider]
+    if model:
+        parts.append(model)
+    if asset.duration_seconds:
+        parts.append(f"{asset.duration_seconds:.1f}s clip")
+    if elapsed > 0:
+        parts.append(f"generated in {elapsed:.1f}s")
+    if estimated_cost is not None:
+        parts.append(f"est. ${estimated_cost:.2f}")
+
+    return asset.model_copy(
+        update={
+            "author": model or provider,
+            "label": " · ".join(parts),
+        }
+    )
+
+
 @router.get("/status")
 async def motion_status():
     return motion_service.status()
@@ -49,6 +90,7 @@ async def generate_scene_motion(
                 scene,
                 duration_seconds=duration_seconds,
             )
+            asset = _decorate_motion_asset(asset)
         except MotionGenerationError as exc:
             status = 503 if not motion_service.enabled else 502
             raise HTTPException(status_code=status, detail=str(exc)) from exc
