@@ -43,9 +43,9 @@ def install_llm_quality() -> None:
     if getattr(llm, "_videogen_quality_installed", False):
         return
 
-    # Qwen 8B previously collapsed four-scene batches into repeated narration and
-    # visual prompts. Keep one scene per detail call for both models so comparison
-    # focuses on model quality instead of parser/batching artefacts.
+    # Safe baseline for the Fast 8B profile. Quality 14B switches to two scenes
+    # per detail call inside create_storyboard: our A/B test showed 14B can keep
+    # distinct scene events while this reduces total web generation time.
     llm.batch_size = 1
 
     original_chat = llm._chat
@@ -61,8 +61,13 @@ def install_llm_quality() -> None:
         profile = request.llm_profile or settings.llm_profile_storyboard
         token = _call_counter.set(0)
         started = time.perf_counter()
+        previous_batch_size = self.batch_size
         try:
             with model_orchestrator.use_llm_profile(profile) as active_profile:
+                # Qwen3-14B quality mode: two scenes per expansion call. Fast 8B
+                # remains one scene per call because four-scene batching previously
+                # produced repeated narration/action/visual blocks.
+                self.batch_size = 2 if active_profile == "quality" else 1
                 storyboard: Storyboard = await original_create_storyboard(request)
                 seen: set[str] = set()
                 updated = list(storyboard.scenes)
@@ -87,6 +92,7 @@ def install_llm_quality() -> None:
                 meta = _run_info(active_profile, "storyboard", started, _call_counter.get())
                 return storyboard.model_copy(update={"llm_generation": meta})
         finally:
+            self.batch_size = previous_batch_size
             _call_counter.reset(token)
 
     async def quality_rebuild_visual_prompt(self, storyboard, scene):
