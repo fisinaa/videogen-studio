@@ -16,6 +16,7 @@ class ModelOrchestrator:
         self._current_job = "idle"
         self._image_batch_owner: asyncio.Task | None = None
         self._image_batch_profile: str | None = None
+        self._llm_idle_task: asyncio.Task | None = None
 
     @property
     def enabled(self) -> bool:
@@ -54,10 +55,44 @@ class ModelOrchestrator:
             await asyncio.sleep(1.0)
         raise RuntimeError(f"llama-server did not become ready within {timeout_seconds}s")
 
+    def _cancel_llm_idle_shutdown(self) -> None:
+        task = self._llm_idle_task
+        self._llm_idle_task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _schedule_llm_idle_shutdown(self) -> None:
+        if not self.enabled or not settings.llm_on_demand:
+            return
+        self._cancel_llm_idle_shutdown()
+        timeout = max(1, int(settings.llm_idle_timeout_seconds))
+        self._llm_idle_task = asyncio.create_task(self._idle_shutdown_worker(timeout))
+
+    async def _idle_shutdown_worker(self, timeout_seconds: int) -> None:
+        try:
+            await asyncio.sleep(timeout_seconds)
+            async with self._gpu_lock:
+                if self._current_job != "idle":
+                    return
+                if await self.llm_active():
+                    self._current_job = "llm:idle-stop"
+                    self._write_lock_file(self._current_job)
+                    try:
+                        await self.stop_llm()
+                    finally:
+                        self._current_job = "idle"
+                        self._remove_lock_file()
+        except asyncio.CancelledError:
+            return
+        finally:
+            if self._llm_idle_task is asyncio.current_task():
+                self._llm_idle_task = None
+
     async def ensure_llm_running(self) -> None:
         if not self.enabled:
             return
 
+        self._cancel_llm_idle_shutdown()
         current = asyncio.current_task()
         if (
             self._gpu_lock.locked()
@@ -117,6 +152,7 @@ class ModelOrchestrator:
         if not self.enabled:
             yield
             return
+        self._cancel_llm_idle_shutdown()
         async with self._gpu_lock:
             self._current_job = "llm"
             self._write_lock_file(self._current_job)
@@ -126,6 +162,7 @@ class ModelOrchestrator:
             finally:
                 self._current_job = "idle"
                 self._remove_lock_file()
+                self._schedule_llm_idle_shutdown()
 
     @asynccontextmanager
     async def _local_gpu_slot(self, job_name: str):
@@ -134,6 +171,7 @@ class ModelOrchestrator:
             yield
             return
 
+        self._cancel_llm_idle_shutdown()
         async with self._gpu_lock:
             self._current_job = job_name
             self._write_lock_file(self._current_job)
@@ -143,7 +181,14 @@ class ModelOrchestrator:
                 yield
             finally:
                 try:
-                    if settings.llm_restart_after_image and llm_was_active:
+                    # On-demand mode intentionally leaves llama-server stopped.
+                    # The next LLM request starts it again. Legacy mode can retain
+                    # the previous restart-after-image behaviour.
+                    if (
+                        not settings.llm_on_demand
+                        and settings.llm_restart_after_image
+                        and llm_was_active
+                    ):
                         self._current_job = "llm:restart"
                         self._write_lock_file(self._current_job)
                         await self.ensure_llm_running()
@@ -178,6 +223,7 @@ class ModelOrchestrator:
             yield
             return
 
+        self._cancel_llm_idle_shutdown()
         async with self._gpu_lock:
             self._image_batch_owner = asyncio.current_task()
             self._image_batch_profile = profile
@@ -189,7 +235,11 @@ class ModelOrchestrator:
                 yield
             finally:
                 try:
-                    if settings.llm_restart_after_image and llm_was_active:
+                    if (
+                        not settings.llm_on_demand
+                        and settings.llm_restart_after_image
+                        and llm_was_active
+                    ):
                         self._current_job = "llm:restart"
                         self._write_lock_file(self._current_job)
                         await self.ensure_llm_running()
@@ -201,10 +251,14 @@ class ModelOrchestrator:
 
     async def status(self) -> dict:
         llm_active = await self.llm_active() if self.enabled else None
+        idle_task_pending = bool(self._llm_idle_task and not self._llm_idle_task.done())
         return {
             "enabled": self.enabled,
             "llm_systemd_unit": settings.llm_systemd_unit,
             "llm_active": llm_active,
+            "llm_on_demand": settings.llm_on_demand,
+            "llm_idle_timeout_seconds": settings.llm_idle_timeout_seconds,
+            "llm_idle_shutdown_pending": idle_task_pending,
             "gpu_busy": self._gpu_lock.locked(),
             "current_job": self._current_job,
             "image_batch_profile": self._image_batch_profile,
