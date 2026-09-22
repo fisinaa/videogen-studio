@@ -15,8 +15,9 @@ async def videogen_motion_progress_js():
     idle: 'Ожидание',
     queued: 'Ожидание GPU',
     gpu_prepare: 'Освобождаю GPU',
+    provider_select: 'Выбираю video provider',
     model_start: 'Запускаю image-to-video',
-    generating: 'Генерирую кадры',
+    generating: 'Генерирую видео',
     finalizing: 'Собираю MP4',
     llm_restored: 'Возвращаю LLM',
     complete: 'Готово',
@@ -41,10 +42,12 @@ async def videogen_motion_progress_js():
     const elapsed = Number(runtime.elapsed_seconds || 0).toFixed(1);
     const stage = STAGE_LABELS[runtime.stage] || runtime.stage || 'Motion';
     const pid = runtime.pid ? ` · PID ${runtime.pid}` : '';
+    const provider = runtime.selected_provider ? ` · ${runtime.selected_provider}` : '';
+    const tool = runtime.selected_tool ? ` / ${runtime.selected_tool}` : '';
     const detail = runtime.detail ? `<div style="margin-top:4px">${runtime.detail}</div>` : '';
     const error = runtime.error ? `<div style="margin-top:5px;color:#ff8d8d;white-space:pre-wrap">${runtime.error}</div>` : '';
 
-    state.innerHTML = `<b>${stage}</b> · ${elapsed} сек${pid}${detail}${error}`;
+    state.innerHTML = `<b>${stage}</b> · ${elapsed} сек${provider}${tool}${pid}${detail}${error}`;
     state.style.color = runtime.state === 'error' ? '#ff8d8d' : (runtime.state === 'complete' ? '#8ee59a' : '#d8cfff');
   }
 
