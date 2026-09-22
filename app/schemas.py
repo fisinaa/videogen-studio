@@ -3,10 +3,11 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-ProjectType = Literal["reel", "video", "cartoon", "series_episode"]
+ProjectType = Literal["reel", "video", "cartoon", "series", "series_episode"]
 AspectRatio = Literal["9:16", "16:9", "1:1"]
 MediaType = Literal["video", "image"]
 MotionMode = Literal["static", "camera_motion", "image_to_video"]
+ReferenceKind = Literal["character", "object", "location", "style"]
 
 
 class CreateProjectRequest(BaseModel):
@@ -30,6 +31,16 @@ class MediaAsset(BaseModel):
     author: str = ""
     label: str = ""
     local_path: str | None = None
+
+
+class SeriesReference(BaseModel):
+    id: str
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=4000)
+    kind: ReferenceKind = "object"
+    asset: MediaAsset
+    from_episode: int = Field(default=1, ge=1)
+    to_episode: int | None = Field(default=None, ge=1)
 
 
 class AudioAsset(BaseModel):
@@ -95,3 +106,7 @@ class Project(BaseModel):
     request: CreateProjectRequest
     storyboard: Storyboard
     character_reference: MediaAsset | None = None
+    series_id: str | None = None
+    series_title: str = ""
+    episode_number: int | None = None
+    series_references: list[SeriesReference] = Field(default_factory=list)
