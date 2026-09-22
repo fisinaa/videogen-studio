@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     # Automatic model/GPU orchestration. Uses a user-level systemd unit for llama-server.
     model_orchestration_enabled: bool = False
     llm_systemd_unit: str = "videogen-llama.service"
+    # On-demand mode starts llama-server on the first LLM request and stops it
+    # after an idle grace period, leaving VRAM free for image/video generation.
+    llm_on_demand: bool = True
+    llm_idle_timeout_seconds: int = 60
+    # Legacy behaviour for non-on-demand mode. In on-demand mode local GPU jobs
+    # leave llama stopped; the next text request starts it automatically.
     llm_restart_after_image: bool = True
     llm_start_timeout_seconds: int = 90
     llm_stop_timeout_seconds: int = 30
