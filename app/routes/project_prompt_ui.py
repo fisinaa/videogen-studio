@@ -69,7 +69,7 @@ async def project_prompt_js():
     const row = form.querySelector('.row');
     if (!row) return;
     const label = document.createElement('label');
-    label.innerHTML = `LLM для storyboard<select id="llm_profile"><option value="quality" selected>Quality — Qwen3.8 27B</option><option value="fast">Fast — Qwen3 8B</option></select>`;
+    label.innerHTML = `LLM для storyboard<select id="llm_profile"><option value="quality" selected>Quality — Qwen3 14B</option><option value="fast">Fast — Qwen3 8B</option></select>`;
     row.appendChild(label);
   }
 
