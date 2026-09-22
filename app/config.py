@@ -17,7 +17,8 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 1800
 
     # Automatic model/GPU orchestration. Uses a user-level systemd unit for llama-server.
-    model_orchestration_enabled: bool = False
+    # Enabled by default because the bundled local llama.cpp provider is operated on-demand.
+    model_orchestration_enabled: bool = True
     llm_systemd_unit: str = "videogen-llama.service"
     # On-demand mode starts llama-server on the first LLM request and stops it
     # after an idle grace period, leaving VRAM free for image/video generation.
