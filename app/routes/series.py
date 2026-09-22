@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.main import _visual_bible, llm
+from app.providers.media.router import media_router
 from app.schemas import CreateProjectRequest, MediaAsset, Project, ReferenceKind, SeriesReference
 from app.storage import project_store
 
@@ -75,9 +76,6 @@ def _sync_episode_from_root(episode: Project, root: Project) -> Project:
     episode.series_title = root.series_title or root.storyboard.title
     episode.character_reference = root.character_reference
     episode.series_references = list(root.series_references)
-    continuity = _reference_context(root, int(episode.episode_number or 1))
-    if continuity and continuity not in episode.storyboard.visual_bible:
-        episode.storyboard.visual_bible = (episode.storyboard.visual_bible.rstrip() + "\n\n" + continuity).strip()
     return episode
 
 
@@ -153,6 +151,43 @@ async def get_series(project_id: str):
         "references": root.series_references,
         "episodes": episodes,
     }
+
+
+@router.post("/{project_id}/character-reference/generate")
+async def generate_series_character_reference(project_id: str):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    root = _series_root(project)
+
+    characters = "; ".join(root.storyboard.characters).strip() or "the main recurring character described by the series"
+    prompt = "\n".join([
+        "Create the canonical character reference image for a recurring animated series.",
+        f"Series: {root.series_title or root.storyboard.title}",
+        f"Character description: {characters}",
+        f"Series visual style: {root.storyboard.visual_style}",
+        "Show the main recurring character clearly, full body, neutral standing pose, simple uncluttered background, readable silhouette, stable proportions, colors, face, clothing and distinctive features. This exact design must remain consistent across all episodes. No captions, labels, text, watermark, extra characters or grid.",
+    ])
+    provider = "openai" if media_router.openai_image.enabled else "local_fast"
+    try:
+        asset = await media_router.generate_image(
+            prompt=prompt,
+            aspect_ratio="1:1",
+            project_id=root.id,
+            scene_id="series-character-reference",
+            media_dir=project_store.media_dir(root.id),
+            provider=provider,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Series Character Reference generation failed: {exc}") from exc
+
+    root.character_reference = asset
+    root.series_id = root.id
+    root.episode_number = root.episode_number or 1
+    root.series_title = root.series_title or root.storyboard.title
+    project_store.save(root)
+    sync = await sync_series_references(root.id)
+    return {"project": root, "asset": asset, "synced": sync["synced"]}
 
 
 @router.post("/{project_id}/episodes")
