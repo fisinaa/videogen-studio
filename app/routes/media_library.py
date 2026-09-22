@@ -47,6 +47,9 @@ def _usage_map(project) -> dict[str, list[str]]:
 
     if project.character_reference is not None:
         add(project.character_reference.asset_id, "character reference")
+    for ref in project.series_references:
+        scope = f"episodes {ref.from_episode}+" if ref.to_episode is None else f"episodes {ref.from_episode}-{ref.to_episode}"
+        add(ref.asset.asset_id, f"series reference: {ref.name} ({scope})")
     for scene in project.storyboard.scenes:
         if scene.selected_media is not None:
             add(scene.selected_media.asset_id, f"{scene.id}: selected media")
