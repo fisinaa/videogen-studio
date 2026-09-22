@@ -52,9 +52,15 @@ class MediaRouter:
         scene_id: str,
         media_dir: Path,
         reference_path: Path | None = None,
+        reference_paths: list[Path] | None = None,
         provider: str | None = None,
     ) -> MediaAsset:
         mode = (provider or settings.image_provider).strip().lower()
+        refs: list[Path] = []
+        for path in ([reference_path] if reference_path is not None else []) + list(reference_paths or []):
+            if path is not None and path not in refs:
+                refs.append(path)
+        primary_ref = refs[0] if refs else None
 
         if mode in {"local", "local_fast"}:
             return await self.local_image.generate(
@@ -63,7 +69,7 @@ class MediaRouter:
                 project_id=project_id,
                 scene_id=scene_id,
                 media_dir=media_dir,
-                reference_path=reference_path,
+                reference_path=primary_ref,
                 profile="fast",
             )
         if mode == "local_quality":
@@ -73,7 +79,7 @@ class MediaRouter:
                 project_id=project_id,
                 scene_id=scene_id,
                 media_dir=media_dir,
-                reference_path=reference_path,
+                reference_path=primary_ref,
                 profile="quality",
             )
         if mode == "local_next":
@@ -83,7 +89,7 @@ class MediaRouter:
                 project_id=project_id,
                 scene_id=scene_id,
                 media_dir=media_dir,
-                reference_path=reference_path,
+                reference_path=primary_ref,
                 profile="next",
             )
         if mode == "openai":
@@ -93,7 +99,7 @@ class MediaRouter:
                 project_id=project_id,
                 scene_id=scene_id,
                 media_dir=media_dir,
-                reference_path=reference_path,
+                reference_paths=refs,
             )
         if mode != "auto":
             raise ValueError(f"Unknown image provider mode: {mode}")
@@ -109,7 +115,7 @@ class MediaRouter:
                     project_id=project_id,
                     scene_id=scene_id,
                     media_dir=media_dir,
-                    reference_path=reference_path,
+                    reference_path=primary_ref,
                     profile="next",
                 ),
             ),
@@ -122,7 +128,7 @@ class MediaRouter:
                     project_id=project_id,
                     scene_id=scene_id,
                     media_dir=media_dir,
-                    reference_path=reference_path,
+                    reference_path=primary_ref,
                     profile="quality",
                 ),
             ),
@@ -135,7 +141,7 @@ class MediaRouter:
                     project_id=project_id,
                     scene_id=scene_id,
                     media_dir=media_dir,
-                    reference_path=reference_path,
+                    reference_path=primary_ref,
                     profile="fast",
                 ),
             ),
@@ -148,7 +154,7 @@ class MediaRouter:
                     project_id=project_id,
                     scene_id=scene_id,
                     media_dir=media_dir,
-                    reference_path=reference_path,
+                    reference_paths=refs,
                 ),
             ),
         ):
