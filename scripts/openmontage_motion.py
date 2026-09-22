@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import mimetypes
 import os
@@ -29,6 +30,50 @@ def _status_value(tool) -> str:
         return f"error:{exc}"
 
 
+def _resize_reference_for_sora(contents: bytes, size: str | None) -> tuple[bytes, str, str]:
+    """Return an exact-size PNG for Sora when a video size was requested.
+
+    Sora image-to-video requires the input reference dimensions to match the
+    requested video dimensions exactly. VideoGen scene stills are intentionally
+    smaller (for example 768x432), while Sora 2 requests 1280x720 for 16:9.
+    Resize the upload in-memory only; the original project image is untouched.
+    """
+    if not size or "x" not in size:
+        return contents, "application/octet-stream", ".bin"
+
+    try:
+        width_text, height_text = size.lower().split("x", 1)
+        target = (int(width_text), int(height_text))
+    except (TypeError, ValueError):
+        return contents, "application/octet-stream", ".bin"
+
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(io.BytesIO(contents)) as image:
+            if image.size == target:
+                output = io.BytesIO()
+                image.convert("RGB").save(output, format="PNG")
+                return output.getvalue(), "image/png", ".png"
+
+            # ImageOps.fit keeps the requested aspect ratio exact. In the usual
+            # VideoGen case (768x432 -> 1280x720) this is just a high-quality
+            # resize with no crop because both images are 16:9.
+            fitted = ImageOps.fit(
+                image.convert("RGB"),
+                target,
+                method=Image.Resampling.LANCZOS,
+                centering=(0.5, 0.5),
+            )
+            output = io.BytesIO()
+            fitted.save(output, format="PNG")
+            return output.getvalue(), "image/png", ".png"
+    except Exception:
+        # Let the API surface the original validation error rather than hiding
+        # an unrelated Pillow/format problem inside the compatibility shim.
+        return contents, "application/octet-stream", ".bin"
+
+
 def _install_openai_video_reference_compat() -> None:
     """Adapt OpenMontage's Sora data-URI payload to current openai-python.
 
@@ -36,7 +81,9 @@ def _install_openai_video_reference_compat() -> None:
     {"image_url": "data:..."}. Recent openai-python video uploads validate the
     field as an upload value before request serialization, so that dict is
     rejected. Convert only that exact data-URI shape into a normal multipart
-    file tuple. All other payloads are left untouched.
+    file tuple. Sora also requires the reference image dimensions to match the
+    requested video size exactly, so resize the upload in-memory when needed.
+    All other payloads are left untouched.
     """
     try:
         from openai.resources.videos import Videos
@@ -54,13 +101,23 @@ def _install_openai_video_reference_compat() -> None:
             data_uri = reference.get("image_url")
             if isinstance(data_uri, str) and data_uri.startswith("data:") and ";base64," in data_uri:
                 header, encoded = data_uri.split(",", 1)
-                mime_type = header[5:].split(";", 1)[0] or "application/octet-stream"
-                extension = mimetypes.guess_extension(mime_type) or ".bin"
+                source_mime = header[5:].split(";", 1)[0] or "application/octet-stream"
                 try:
                     contents = base64.b64decode(encoded, validate=True)
                 except Exception as exc:
                     raise ValueError(f"Invalid Sora input_reference data URI: {exc}") from exc
-                kwargs["input_reference"] = (f"reference{extension}", contents, mime_type)
+
+                resized, resized_mime, resized_ext = _resize_reference_for_sora(
+                    contents,
+                    str(kwargs.get("size") or ""),
+                )
+                if resized_mime == "application/octet-stream":
+                    mime_type = source_mime
+                    extension = mimetypes.guess_extension(mime_type) or ".bin"
+                else:
+                    mime_type = resized_mime
+                    extension = resized_ext
+                kwargs["input_reference"] = (f"reference{extension}", resized, mime_type)
         return original(self, *args, **kwargs)
 
     create_and_poll_compat._videogen_reference_compat = True
