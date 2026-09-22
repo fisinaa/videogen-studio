@@ -13,6 +13,18 @@ from app.services.model_orchestrator import model_orchestrator
 _call_counter: ContextVar[int] = ContextVar("videogen_llm_call_counter", default=0)
 
 
+CONTINUITY_GUARD = """
+
+STRICT CONTINUITY RULES:
+- Do not rename canonical characters.
+- Do not invent new permanent accessories, clothing, colors, signature traits or backstory unless explicitly requested.
+- Do not add fantasy, magic, supernatural objects or powers unless they are present in the user's idea or supplied continuity context.
+- Preserve recurring props, locations and character appearance exactly when they are supplied.
+- Every scene must advance the existing story with a distinct event; do not repeat another scene's narration, action or composition.
+- Prefer the user's established world and plot over introducing unrelated subplots, creatures, quests or lore.
+"""
+
+
 def _fingerprint(scene) -> str:
     parts = [
         scene.narration or "",
@@ -38,10 +50,25 @@ def _run_info(profile: str, operation: str, started: float, calls: int) -> LLMRu
 def install_llm_quality() -> None:
     """Install scene-quality guards, multi-profile routing and LLM timing metadata."""
     import app.main as main_module
+    import app.providers.llm.llama_cpp as llama_module
 
     llm = main_module.llm
     if getattr(llm, "_videogen_quality_installed", False):
         return
+
+    # Apply stronger continuity constraints to all storyboard/visual generation
+    # prompts without duplicating the provider implementation.
+    for name in (
+        "OUTLINE_SYSTEM_PROMPT",
+        "DETAIL_SYSTEM_PROMPT",
+        "SINGLE_SCENE_SYSTEM_PROMPT",
+        "VISUAL_ONLY_SYSTEM_PROMPT",
+        "VISUAL_REPAIR_SYSTEM_PROMPT",
+        "PLAIN_VISUAL_SYSTEM_PROMPT",
+    ):
+        value = getattr(llama_module, name, "")
+        if CONTINUITY_GUARD.strip() not in value:
+            setattr(llama_module, name, value.rstrip() + CONTINUITY_GUARD)
 
     # Safe baseline for the Fast 8B profile. Quality 14B switches to two scenes
     # per detail call inside create_storyboard: our A/B test showed 14B can keep
