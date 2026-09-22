@@ -10,12 +10,6 @@ router = APIRouter(prefix="/api/motion", tags=["motion"])
 
 
 def _decorate_motion_asset(asset):
-    """Persist useful generation metadata in the existing MediaAsset fields.
-
-    MediaAsset already has provider/author/label, so older saved projects remain
-    compatible without a schema migration. The UI already renders label for each
-    motion candidate, which makes these details visible immediately.
-    """
     runtime = motion_service.runtime_status()
     provider = str(runtime.get("selected_provider") or asset.author or "unknown")
     tool = str(runtime.get("selected_tool") or "")
@@ -26,8 +20,6 @@ def _decorate_motion_asset(asset):
     if tool == "sora_video":
         model = "sora-2"
         seconds = float(asset.duration_seconds or 4.0)
-        # OpenMontage's Sora provider currently exposes a placeholder estimate of
-        # $0.50 per 4 seconds. Keep the UI explicit that this is an estimate.
         estimated_cost = 0.50 * (seconds / 4.0)
     elif tool:
         model = tool
@@ -76,6 +68,7 @@ async def generate_scene_motion(
     project_id: str,
     scene_id: str,
     duration_seconds: float | None = Query(default=None, ge=2.0, le=30.0),
+    preferred_provider: str | None = Query(default=None, pattern="^(auto|openai|wan)$"),
 ):
     project = project_store.load(project_id)
     if project is None:
@@ -89,6 +82,7 @@ async def generate_scene_motion(
                 project,
                 scene,
                 duration_seconds=duration_seconds,
+                preferred_provider=preferred_provider,
             )
             asset = _decorate_motion_asset(asset)
         except MotionGenerationError as exc:
