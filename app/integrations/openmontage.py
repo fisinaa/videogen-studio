@@ -244,6 +244,34 @@ class OpenMontageIntegration:
             base["render_engines"] = {"hyperframes": False, "remotion": False, "ffmpeg": False}
         return base
 
+    async def preview(self, project: Project) -> dict:
+        sync_project(project, save=True)
+        job = self.build_job(project, "hyperframes")
+        # Stable per-project preview port in the 3200-4199 range.
+        job["preview_port"] = 3200 + (int(project.id[:6], 16) % 1000)
+        runner = Path("./scripts/openmontage_preview.py").resolve()
+        if not runner.is_file():
+            raise RuntimeError(f"OpenMontage preview runner not found: {runner}")
+
+        env = os.environ.copy()
+        env["OPENMONTAGE_ROOT"] = str(settings.openmontage_root.resolve())
+        process = await asyncio.create_subprocess_exec(
+            str(self._python()),
+            str(runner),
+            json.dumps(job, ensure_ascii=False),
+            cwd=str(Path.cwd()),
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=180)
+        text = stdout.decode("utf-8", errors="replace").strip()
+        err = stderr.decode("utf-8", errors="replace").strip()
+        payload = self._parse_helper_json(text) or {}
+        if process.returncode != 0 or not payload.get("success"):
+            raise RuntimeError(payload.get("error") or err or text or "OpenMontage Studio failed to start")
+        return payload
+
     async def render(self, project: Project, runtime: str) -> dict:
         sync_project(project, save=True)
         job = self.build_job(project, runtime)
