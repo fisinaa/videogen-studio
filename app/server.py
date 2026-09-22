@@ -1,6 +1,13 @@
 from starlette.responses import Response
 
 from app.main import app
+from app.services.series_continuity import install_series_continuity
+
+
+# Patch app.main helpers before route modules import references to them (pipeline.py
+# imports _generate_scene_image directly).
+install_series_continuity()
+
 from app.routes.media_files import router as media_files_router
 from app.routes.media_library import router as media_library_router
 from app.routes.motion import router as motion_router
@@ -13,10 +20,7 @@ from app.routes.project_tools_ui import router as project_tools_ui_router
 from app.routes.series import router as series_router
 from app.routes.series_ui import router as series_ui_router
 from app.routes.ui_tools import router as ui_tools_router
-from app.services.series_continuity import install_series_continuity
 
-
-install_series_continuity()
 
 app.include_router(openmontage_router)
 app.include_router(production_router)
