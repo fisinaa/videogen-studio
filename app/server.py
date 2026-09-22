@@ -7,6 +7,7 @@ from app.routes.motion import router as motion_router
 from app.routes.motion_progress_ui import router as motion_progress_ui_router
 from app.routes.openmontage import router as openmontage_router
 from app.routes.pipeline import router as pipeline_router
+from app.routes.pipeline_progress_ui import router as pipeline_progress_ui_router
 from app.routes.production import router as production_router
 from app.routes.project_tools_ui import router as project_tools_ui_router
 from app.routes.ui_tools import router as ui_tools_router
@@ -21,6 +22,7 @@ app.include_router(pipeline_router)
 app.include_router(ui_tools_router)
 app.include_router(project_tools_ui_router)
 app.include_router(motion_progress_ui_router)
+app.include_router(pipeline_progress_ui_router)
 
 
 @app.middleware("http")
@@ -40,6 +42,7 @@ async def inject_videogen_ui_tools(request, call_next):
         '<script src="/videogen-enhancements.js"></script>',
         '<script src="/videogen-project-tools.js"></script>',
         '<script src="/videogen-motion-progress.js"></script>',
+        '<script src="/videogen-pipeline-progress.js"></script>',
     ]
     injection = "\n".join(marker for marker in markers if marker not in text)
     if injection:
