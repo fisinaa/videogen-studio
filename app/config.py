@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     llm_base_url: str = "http://127.0.0.1:8081/v1"
     llm_model: str = "local"
     llm_api_key: str = "local"
-    llm_timeout_seconds: int = 180
+    llm_timeout_seconds: int = 300
     llm_temperature: float = 0.7
     llm_max_tokens: int = 1800
 
@@ -41,13 +41,11 @@ class Settings(BaseSettings):
     llm_fast_model_path: Path = Path("/home/faa/models/Qwen3-8B-abliterated.Q4_K_M.gguf")
     llm_fast_args: str = "-ngl 32 -c 4096 -ctk q8_0 -ctv q8_0 -t 12 -tb 12 -np 1"
 
-    # Quality profile: default for storyboard, narration, scene rewrites and
-    # visual prompts while we compare the larger model against the 8B baseline.
-    llm_quality_model_name: str = "Qwen3.8-27B"
-    llm_quality_model_path: Path = Path(
-        "/home/faa/models/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-Q5_K_P.gguf"
-    )
-    llm_quality_args: str = "-ngl 32 -c 4096 -ctk q8_0 -ctv q8_0 -t 12 -tb 12 -np 1"
+    # Quality profile: Qwen3 14B tested on GTX 1660 6 GB. 25 GPU layers fit
+    # reliably and provide a practical quality/speed balance for storyboard work.
+    llm_quality_model_name: str = "Qwen3-14B"
+    llm_quality_model_path: Path = Path("/home/faa/models/Qwen3-14B-Q4_K_M.gguf")
+    llm_quality_args: str = "-ngl 25 -c 4096 -ctk q8_0 -ctv q8_0 -t 12 -tb 12 -np 1"
 
     llm_profile_default: str = "fast"
     llm_profile_storyboard: str = "quality"
