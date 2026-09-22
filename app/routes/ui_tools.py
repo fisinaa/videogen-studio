@@ -65,6 +65,120 @@ async def videogen_enhancements_js():
     });
   }
 
+  async function uploadSceneFile(sceneEl, file) {
+    const id = projectId();
+    const sceneId = sceneEl.dataset.sceneId;
+    const message = sceneEl.querySelector('.scene-message');
+    if (!id || !sceneId || !file) return;
+    const form = new FormData();
+    form.append('file', file);
+    if (message) message.textContent = `Загружаю ${file.name}...`;
+    const response = await fetch(`/api/projects/${encodeURIComponent(id)}/scenes/${encodeURIComponent(sceneId)}/upload`, {
+      method: 'POST',
+      body: form,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `upload HTTP ${response.status}`);
+    location.reload();
+  }
+
+  function enhanceLocalFileControls() {
+    document.querySelectorAll('.scene-editor').forEach(sceneEl => {
+      if (sceneEl.dataset.fileUi === '1') return;
+      const actions = sceneEl.querySelector('.scene-actions');
+      if (!actions) return;
+      sceneEl.dataset.fileUi = '1';
+
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*,video/*,audio/*';
+      input.style.display = 'none';
+      input.className = 'local-file-input';
+
+      const upload = document.createElement('button');
+      upload.type = 'button';
+      upload.className = 'secondary upload-local-file';
+      upload.textContent = 'Загрузить файл';
+      upload.title = 'Добавить изображение, видео или аудио с локального компьютера';
+      upload.addEventListener('click', () => input.click());
+      input.addEventListener('change', async () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        upload.disabled = true;
+        try {
+          await uploadSceneFile(sceneEl, file);
+        } catch (error) {
+          const message = sceneEl.querySelector('.scene-message');
+          if (message) {
+            message.textContent = `Ошибка загрузки: ${error.message || error}`;
+            message.style.color = '#ff8d8d';
+          }
+        } finally {
+          upload.disabled = false;
+          input.value = '';
+        }
+      });
+      actions.append(upload, input);
+
+      sceneEl.querySelectorAll('.delete-candidate').forEach(button => {
+        button.disabled = false;
+        button.textContent = 'Удалить файл';
+        button.title = 'Удалить файл физически из проекта';
+      });
+
+      const audioBox = sceneEl.querySelector('.selected-audio');
+      if (audioBox && !audioBox.querySelector('.hard-delete-selected-audio')) {
+        const source = audioBox.querySelector('audio')?.getAttribute('src') || '';
+        const filename = source.split('/').pop()?.split('?')[0];
+        if (filename) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'danger hard-delete-selected-audio';
+          button.textContent = 'Удалить аудиофайл';
+          button.style.marginTop = '8px';
+          button.dataset.filename = decodeURIComponent(filename);
+          audioBox.appendChild(button);
+        }
+      }
+    });
+  }
+
+  async function hardDeleteFile(filename) {
+    const id = projectId();
+    if (!id) throw new Error('Не удалось определить ID проекта');
+    const response = await fetch(`/api/projects/${encodeURIComponent(id)}/files/${encodeURIComponent(filename)}`, {method:'DELETE'});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `delete HTTP ${response.status}`);
+    return data;
+  }
+
+  document.addEventListener('click', async event => {
+    const deleteCandidate = event.target.closest?.('.delete-candidate');
+    const deleteAudio = event.target.closest?.('.hard-delete-selected-audio');
+    if (!deleteCandidate && !deleteAudio) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    const filename = deleteAudio?.dataset?.filename || deleteCandidate?.closest('.candidate-card')?.dataset?.assetId;
+    if (!filename) return;
+    if (!confirm(`Удалить файл ${filename} из проекта полностью?\n\nФайл будет удалён с диска, а не просто исключён из сцены.`)) return;
+
+    const scene = (deleteCandidate || deleteAudio).closest('.scene-editor');
+    const message = scene?.querySelector('.scene-message');
+    try {
+      if (message) message.textContent = `Удаляю ${filename} с диска...`;
+      await hardDeleteFile(filename);
+      location.reload();
+    } catch (error) {
+      if (message) {
+        message.textContent = `Ошибка удаления: ${error.message || error}`;
+        message.style.color = '#ff8d8d';
+      }
+    }
+  }, true);
+
   async function fetchMotionState(sceneId) {
     const id = projectId();
     if (!id) throw new Error('Не удалось определить ID проекта');
@@ -194,7 +308,7 @@ async def videogen_enhancements_js():
           sceneEl,
           `/api/motion/projects/${encodeURIComponent(projectId())}/scenes/${encodeURIComponent(sceneId)}/generate`,
           'POST',
-          'Генерация AI motion MP4... На локальной GPU это может занять много времени.'
+          'Генерация AI motion MP4...'
         );
       });
       reset.addEventListener('click', async () => {
@@ -214,8 +328,27 @@ async def videogen_enhancements_js():
     button.dataset.hasExisting = hasExisting ? '1' : '0';
   }
 
+  async function openStudio(panel, openWindow = true) {
+    const id = projectId();
+    if (!id) throw new Error('Не удалось определить ID проекта');
+    const state = panel?.querySelector('.render-state');
+    if (state) state.textContent = 'Подготавливаю OpenMontage / HyperFrames Studio...';
+    const response = await fetch(`/api/openmontage/projects/${encodeURIComponent(id)}/studio`, {method:'POST'});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `studio HTTP ${response.status}`);
+    const host = location.hostname || '127.0.0.1';
+    const url = `http://${host}:${data.port}${data.studio_path || '/'}`;
+    if (openWindow) window.open(url, '_blank', 'noopener');
+    if (state) {
+      state.innerHTML = `OpenMontage Studio запущен: <a href="${esc(url)}" target="_blank" style="color:#bdafff">${esc(url)}</a>`;
+      state.style.color = '#8ee59a';
+    }
+    return url;
+  }
+
   function ensurePanel() {
     enhanceImageModelMenus();
+    enhanceLocalFileControls();
     enhanceMotionControls();
 
     const actions = document.querySelector('.project-actions');
@@ -230,6 +363,12 @@ async def videogen_enhancements_js():
       <option value="remotion">Remotion — альтернативный</option>
     `;
 
+    const studio = document.createElement('button');
+    studio.type = 'button';
+    studio.className = 'videogen-open-studio';
+    studio.textContent = 'OpenMontage Studio';
+    studio.style.background = '#315e79';
+
     const render = document.createElement('button');
     render.type = 'button';
     render.className = 'videogen-render-main';
@@ -239,7 +378,7 @@ async def videogen_enhancements_js():
     const controls = document.createElement('span');
     controls.className = 'videogen-render-controls';
     controls.style.cssText = 'display:inline-flex;gap:7px;align-items:center;flex-wrap:wrap;';
-    controls.append(runtime, render);
+    controls.append(runtime, studio, render);
 
     const wrap = document.createElement('div');
     wrap.className = 'videogen-render-panel';
@@ -248,6 +387,7 @@ async def videogen_enhancements_js():
       <b>Финальное видео</b>
       <div class="muted" style="margin-top:6px;line-height:1.45">
         HyperFrames — основной монтаж: картинки/готовые motion-клипы, движение камеры, озвучка и субтитры.<br>
+        Кнопка OpenMontage Studio открывает полноценный HyperFrames timeline editor в браузере.<br>
         Remotion — альтернативный движок композиции; сам по себе персонажей на картинке не оживляет.
       </div>
       <div class="render-state muted" style="margin-top:8px">Готов к сборке.</div>
@@ -257,6 +397,15 @@ async def videogen_enhancements_js():
     actions.append(controls);
     actions.parentElement?.appendChild(wrap);
 
+    studio.addEventListener('click', async () => {
+      studio.disabled = true;
+      try { await openStudio(wrap, true); }
+      catch (error) {
+        const state = wrap.querySelector('.render-state');
+        state.textContent = `Ошибка OpenMontage Studio: ${error.message || error}`;
+        state.style.color = '#ff8d8d';
+      } finally { studio.disabled = false; }
+    });
     render.addEventListener('click', () => runRender(runtime.value, render, runtime, wrap));
     runtime.addEventListener('change', () => loadExisting(wrap, render, runtime));
     loadExisting(wrap, render, runtime);
@@ -305,6 +454,9 @@ async def videogen_enhancements_js():
       ? 'Синхронизация изменений перед пересборкой...'
       : 'Синхронизация таймингов по озвучке...';
     try {
+      if (runtime === 'hyperframes') {
+        await openStudio(panel, true);
+      }
       const sync = await fetch(`/api/production/projects/${encodeURIComponent(id)}/sync`, {method:'POST'});
       if (!sync.ok) {
         const err = await sync.json().catch(() => ({}));
@@ -332,6 +484,7 @@ async def videogen_enhancements_js():
   const observer = new MutationObserver(() => {
     ensurePanel();
     enhanceImageModelMenus();
+    enhanceLocalFileControls();
     enhanceMotionControls();
   });
   observer.observe(document.documentElement, {childList:true, subtree:true});
