@@ -16,20 +16,43 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.7
     llm_max_tokens: int = 1800
 
-    # Automatic model/GPU orchestration. Uses a user-level systemd unit for llama-server.
-    # Enabled by default because the bundled local llama.cpp provider is operated on-demand.
+    # Automatic model/GPU orchestration.
     model_orchestration_enabled: bool = True
-    llm_systemd_unit: str = "videogen-llama.service"
-    # On-demand mode starts llama-server on the first LLM request and stops it
-    # after an idle grace period, leaving VRAM free for image/video generation.
     llm_on_demand: bool = True
     llm_idle_timeout_seconds: int = 60
-    # Legacy behaviour for non-on-demand mode. In on-demand mode local GPU jobs
-    # leave llama stopped; the next text request starts it automatically.
     llm_restart_after_image: bool = True
-    llm_start_timeout_seconds: int = 90
+    llm_start_timeout_seconds: int = 180
     llm_stop_timeout_seconds: int = 30
     gpu_lock_file: Path = Path("/tmp/videogen-gpu.lock")
+
+    # Legacy fixed-model systemd unit. Kept for compatibility, but the default
+    # multi-profile launcher below starts llama-server directly so it can switch
+    # between Fast and Quality models on demand.
+    llm_systemd_unit: str = "videogen-llama.service"
+    llm_launch_mode: str = "direct"  # direct | systemd
+    llm_server_bin: Path = Path("/home/faa/llama.cpp/build/bin/llama-server")
+    llm_host: str = "127.0.0.1"
+    llm_port: int = 8081
+    llm_state_file: Path = Path("/tmp/videogen-llm-state.json")
+    llm_log_file: Path = Path("/tmp/videogen-llama.log")
+
+    # Fast profile: small model for optional low-latency work.
+    llm_fast_model_name: str = "Qwen3-8B"
+    llm_fast_model_path: Path = Path("/home/faa/models/Qwen3-8B-abliterated.Q4_K_M.gguf")
+    llm_fast_args: str = "-ngl 32 -c 4096 -ctk q8_0 -ctv q8_0 -t 12 -tb 12 -np 1"
+
+    # Quality profile: default for storyboard, narration, scene rewrites and
+    # visual prompts while we compare the larger model against the 8B baseline.
+    llm_quality_model_name: str = "Qwen3.8-27B"
+    llm_quality_model_path: Path = Path(
+        "/home/faa/models/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-Q5_K_P.gguf"
+    )
+    llm_quality_args: str = "-ngl 32 -c 4096 -ctk q8_0 -ctv q8_0 -t 12 -tb 12 -np 1"
+
+    llm_profile_default: str = "fast"
+    llm_profile_storyboard: str = "quality"
+    llm_profile_visual_prompt: str = "quality"
+    llm_profile_rewrite: str = "quality"
 
     pexels_api_key: str = ""
     pixabay_api_key: str = ""
