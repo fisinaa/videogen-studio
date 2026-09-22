@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
 from app.integrations.openmontage import openmontage
@@ -16,12 +16,17 @@ async def openmontage_status():
 
 
 @router.post("/projects/{project_id}/studio")
-async def open_project_studio(project_id: str):
+async def open_project_studio(project_id: str, request: Request):
     project = project_store.load(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     try:
-        return await openmontage.preview(project)
+        payload = await openmontage.preview(project)
+        port = int(payload.get("port") or 3002)
+        studio_path = str(payload.get("studio_path") or "/")
+        host = request.url.hostname or "127.0.0.1"
+        payload["url"] = f"http://{host}:{port}{studio_path}"
+        return payload
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
