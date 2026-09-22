@@ -41,6 +41,11 @@ async def project_llm_prompt(project_id: str):
         "language": project.request.language,
         "requested_llm_profile": project.request.llm_profile,
         "storyboard_llm": project.storyboard.llm_generation,
+        "scene_llm": {
+            scene.id: scene.llm_generation
+            for scene in project.storyboard.scenes
+            if scene.llm_generation is not None
+        },
         "llm_defaults": {
             "storyboard": settings.llm_profile_storyboard,
             "visual_prompt": settings.llm_profile_visual_prompt,
@@ -68,8 +73,6 @@ async def project_prompt_js():
     row.appendChild(label);
   }
 
-  // The original page owns project creation. Inject the selected profile into its
-  // existing POST body without duplicating or replacing the form submit handler.
   if (!window.__videogenLlmFetchWrapped) {
     window.__videogenLlmFetchWrapped = true;
     const originalFetch = window.fetch.bind(window);
@@ -95,6 +98,22 @@ async def project_prompt_js():
     return `<b>${esc(meta.profile)}</b> · ${esc(meta.model_name)} · ${seconds} сек · ${esc(meta.calls || 0)} LLM выз.`;
   }
 
+  function annotateScenes(sceneMeta) {
+    document.querySelectorAll('.scene-editor[data-scene-id]').forEach(editor => {
+      const id = editor.dataset.sceneId;
+      const meta = sceneMeta?.[id];
+      let badge = editor.querySelector('.scene-llm-meta');
+      if (!meta) { badge?.remove(); return; }
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'scene-llm-meta muted';
+        badge.style.cssText = 'font-size:11px;margin-left:7px;';
+        editor.querySelector('.scene-head')?.appendChild(badge);
+      }
+      badge.innerHTML = `LLM: ${esc(meta.model_name)} · ${Number(meta.duration_seconds||0).toFixed(1)} сек · ${esc(meta.operation||'')}`;
+    });
+  }
+
   async function load(force=false) {
     ensureProfileSelector();
     const id = projectId();
@@ -112,6 +131,7 @@ async def project_prompt_js():
       if (!response.ok) return;
     } catch (_) { return; }
 
+    annotateScenes(data.scene_llm || {});
     lastId = id;
     document.querySelector('.videogen-project-prompt')?.remove();
     const card = document.createElement('div');
