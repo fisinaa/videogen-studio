@@ -58,8 +58,10 @@ def install_series_continuity() -> None:
         return None
 
     def series_image_prompt(project: Project, scene, use_reference: bool):
-        prompt, reference_path = original_image_prompt(project, scene, use_reference)
+        root = _root_for(project)
         refs = _active_references(project)
+        effective_reference = use_reference or bool(root and (root.character_reference or refs))
+        prompt, reference_path = original_image_prompt(project, scene, effective_reference)
         if refs:
             lines = [
                 "SERIES CONTINUITY REFERENCES. Keep these recurring designs stable and do not redesign them:",
@@ -78,14 +80,16 @@ def install_series_continuity() -> None:
         return prompt, reference_path
 
     async def series_generate_scene_image(project: Project, scene, provider: str, use_reference: bool):
-        prompt, character_path = series_image_prompt(project, scene, use_reference)
+        root = _root_for(project)
+        refs = _active_references(project)
+        effective_reference = use_reference or bool(root and (root.character_reference or refs))
+        prompt, character_path = series_image_prompt(project, scene, effective_reference)
         reference_paths: list[Path] = []
-        if use_reference and character_path is not None:
+        if effective_reference and character_path is not None:
             reference_paths.append(character_path)
 
-        root = _root_for(project)
-        if use_reference and root is not None:
-            for ref in _active_references(project):
+        if effective_reference and root is not None:
+            for ref in refs:
                 if not ref.asset.local_path:
                     continue
                 path = project_store.media_file(root.id, Path(ref.asset.local_path).name)
