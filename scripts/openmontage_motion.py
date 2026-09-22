@@ -32,13 +32,7 @@ def _status_value(tool) -> str:
 
 
 def _resize_reference_for_sora(contents: bytes, size: str | None) -> tuple[bytes, str, str]:
-    """Return an exact-size PNG for Sora when a video size was requested.
-
-    Sora image-to-video requires the input reference dimensions to match the
-    requested video dimensions exactly. VideoGen scene stills are intentionally
-    smaller (for example 768x432), while Sora 2 requests 1280x720 for 16:9.
-    Resize the upload in-memory only; the original project image is untouched.
-    """
+    """Return an exact-size PNG for Sora when a video size was requested."""
     if not size or "x" not in size:
         return contents, "application/octet-stream", ".bin"
 
@@ -112,11 +106,6 @@ def _install_openai_video_reference_compat() -> None:
 
 
 def _sora_native_duration(seconds: int) -> int:
-    """Sora currently accepts only 4, 8 or 12 seconds.
-
-    Generate the smallest native clip that fully covers the requested target;
-    VideoGen trims it afterwards when an exact intermediate duration is needed.
-    """
     if seconds <= 4:
         return 4
     if seconds <= 8:
@@ -150,25 +139,11 @@ def _sora_is_effective_provider(preferred_provider: str) -> bool:
 
 
 def _trim_video(output: Path, target_seconds: int) -> None:
-    """Trim a provider-native clip to the requested VideoGen duration."""
     trimmed = output.with_name(f"{output.stem}-trimmed{output.suffix}")
     command = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        str(output),
-        "-t",
-        str(target_seconds),
-        "-map",
-        "0",
-        "-c",
-        "copy",
-        "-movflags",
-        "+faststart",
-        str(trimmed),
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        "-i", str(output), "-t", str(target_seconds), "-map", "0",
+        "-c", "copy", "-movflags", "+faststart", str(trimmed),
     ]
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0 or not trimmed.is_file() or trimmed.stat().st_size == 0:
@@ -197,11 +172,7 @@ def status() -> int:
         })
 
     available = [item for item in providers if item["status"] == "available"]
-    _json({
-        "success": True,
-        "available": available,
-        "providers": providers,
-    })
+    _json({"success": True, "available": available, "providers": providers})
     return 0
 
 
@@ -217,7 +188,7 @@ def generate(job: dict) -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
 
     requested_duration = max(1, int(round(float(job.get("duration") or 10))))
-    preferred_provider = str(job.get("preferred_provider") or "auto")
+    preferred_provider = str(job.get("preferred_provider") or "auto").strip().lower()
     sora_expected = _sora_is_effective_provider(preferred_provider)
     provider_duration = _sora_native_duration(requested_duration) if sora_expected else requested_duration
 
@@ -230,6 +201,11 @@ def generate(job: dict) -> int:
         "output_path": str(output),
         "preferred_provider": preferred_provider,
     }
+    # A UI-selected provider is a hard choice, not merely a scoring hint.
+    # Without this, VideoSelector may ignore preferred_provider when its score gap
+    # is too large. Auto deliberately keeps the full provider pool.
+    if preferred_provider != "auto":
+        inputs["allowed_providers"] = [preferred_provider]
 
     result = VideoSelector().execute(inputs)
     payload = {
