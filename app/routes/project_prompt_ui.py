@@ -58,6 +58,37 @@ async def project_prompt_js():
   const projectId = () => new URL(location.href).searchParams.get('project') || document.querySelector('.recent-project.active')?.dataset?.projectId || null;
   let lastId = null;
 
+  function ensureProfileSelector() {
+    const form = document.getElementById('project-form');
+    if (!form || document.getElementById('llm_profile')) return;
+    const row = form.querySelector('.row');
+    if (!row) return;
+    const label = document.createElement('label');
+    label.innerHTML = `LLM для storyboard<select id="llm_profile"><option value="quality" selected>Quality — Qwen3.8 27B</option><option value="fast">Fast — Qwen3 8B</option></select>`;
+    row.appendChild(label);
+  }
+
+  // The original page owns project creation. Inject the selected profile into its
+  // existing POST body without duplicating or replacing the form submit handler.
+  if (!window.__videogenLlmFetchWrapped) {
+    window.__videogenLlmFetchWrapped = true;
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (input, init={}) => {
+      try {
+        const url = typeof input === 'string' ? input : input?.url || '';
+        const method = String(init?.method || 'GET').toUpperCase();
+        if (method === 'POST' && /\/api\/projects\/?$/.test(url) && typeof init.body === 'string') {
+          const payload = JSON.parse(init.body);
+          if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+            payload.llm_profile = document.getElementById('llm_profile')?.value || 'quality';
+            init = {...init, body: JSON.stringify(payload)};
+          }
+        }
+      } catch (_) {}
+      return originalFetch(input, init);
+    };
+  }
+
   function runLabel(meta) {
     if (!meta) return '<span class="muted">Для старого проекта metadata модели не сохранена.</span>';
     const seconds = Number(meta.duration_seconds || 0).toFixed(1);
@@ -65,6 +96,7 @@ async def project_prompt_js():
   }
 
   async function load(force=false) {
+    ensureProfileSelector();
     const id = projectId();
     if (!id) {
       document.querySelector('.videogen-project-prompt')?.remove();
@@ -113,8 +145,9 @@ async def project_prompt_js():
     else document.getElementById('result')?.prepend(card);
   }
 
-  const observer = new MutationObserver(() => load(false));
+  const observer = new MutationObserver(() => { ensureProfileSelector(); load(false); });
   observer.observe(document.documentElement, {childList:true,subtree:true});
+  ensureProfileSelector();
   load(true);
   setInterval(() => load(true), 3000);
 })();
