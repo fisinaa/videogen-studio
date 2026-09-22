@@ -1,12 +1,14 @@
 from starlette.responses import Response
 
 from app.main import app
+from app.services.llm_quality import install_llm_quality
 from app.services.series_continuity import install_series_continuity
 
 
 # Patch app.main helpers before route modules import references to them (pipeline.py
 # imports _generate_scene_image directly).
 install_series_continuity()
+install_llm_quality()
 
 from app.routes.media_files import router as media_files_router
 from app.routes.media_library import router as media_library_router
@@ -16,6 +18,7 @@ from app.routes.openmontage import router as openmontage_router
 from app.routes.pipeline import router as pipeline_router
 from app.routes.pipeline_progress_ui import router as pipeline_progress_ui_router
 from app.routes.production import router as production_router
+from app.routes.project_prompt_ui import router as project_prompt_ui_router
 from app.routes.project_tools_ui import router as project_tools_ui_router
 from app.routes.series import router as series_router
 from app.routes.series_ui import router as series_ui_router
@@ -29,6 +32,7 @@ app.include_router(media_files_router)
 app.include_router(media_library_router)
 app.include_router(pipeline_router)
 app.include_router(series_router)
+app.include_router(project_prompt_ui_router)
 app.include_router(ui_tools_router)
 app.include_router(project_tools_ui_router)
 app.include_router(series_ui_router)
@@ -52,6 +56,7 @@ async def inject_videogen_ui_tools(request, call_next):
     markers = [
         '<script src="/videogen-enhancements.js"></script>',
         '<script src="/videogen-project-tools.js"></script>',
+        '<script src="/videogen-project-prompt.js"></script>',
         '<script src="/videogen-series.js"></script>',
         '<script src="/videogen-motion-progress.js"></script>',
         '<script src="/videogen-pipeline-progress.js"></script>',
