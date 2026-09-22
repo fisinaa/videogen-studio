@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     openai_image_quality: str = "medium"
     openai_image_timeout_seconds: int = 180
 
+    # Optional fal.ai credential used by OpenMontage video providers such as Seedance.
+    fal_key: str = ""
+
     # stable-diffusion.cpp shared runtime
     sd_cpp_bin: Path = Path("/opt/stable-diffusion.cpp/build/bin/sd-cli")
     sd_cpp_vae: Path = Path("")
