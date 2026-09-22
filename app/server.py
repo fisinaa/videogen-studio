@@ -10,8 +10,13 @@ from app.routes.pipeline import router as pipeline_router
 from app.routes.pipeline_progress_ui import router as pipeline_progress_ui_router
 from app.routes.production import router as production_router
 from app.routes.project_tools_ui import router as project_tools_ui_router
+from app.routes.series import router as series_router
+from app.routes.series_ui import router as series_ui_router
 from app.routes.ui_tools import router as ui_tools_router
+from app.services.series_continuity import install_series_continuity
 
+
+install_series_continuity()
 
 app.include_router(openmontage_router)
 app.include_router(production_router)
@@ -19,8 +24,10 @@ app.include_router(motion_router)
 app.include_router(media_files_router)
 app.include_router(media_library_router)
 app.include_router(pipeline_router)
+app.include_router(series_router)
 app.include_router(ui_tools_router)
 app.include_router(project_tools_ui_router)
+app.include_router(series_ui_router)
 app.include_router(motion_progress_ui_router)
 app.include_router(pipeline_progress_ui_router)
 
@@ -41,6 +48,7 @@ async def inject_videogen_ui_tools(request, call_next):
     markers = [
         '<script src="/videogen-enhancements.js"></script>',
         '<script src="/videogen-project-tools.js"></script>',
+        '<script src="/videogen-series.js"></script>',
         '<script src="/videogen-motion-progress.js"></script>',
         '<script src="/videogen-pipeline-progress.js"></script>',
     ]
