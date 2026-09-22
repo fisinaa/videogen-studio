@@ -171,8 +171,12 @@ class MotionService:
             "duration": requested,
             "preferred_provider": settings.motion_openmontage_preferred_provider,
         }
+        # Do not Path.resolve() the venv python executable. The venv entry point is
+        # commonly a symlink to /usr/bin/python; resolving it bypasses pyvenv.cfg
+        # discovery and silently launches the system interpreter without venv deps.
+        openmontage_python = settings.openmontage_python.expanduser()
         cmd = [
-            str(settings.openmontage_python.resolve()),
+            str(openmontage_python),
             str(settings.motion_openmontage_runner.resolve()),
             "generate",
             json.dumps(job, ensure_ascii=False),
