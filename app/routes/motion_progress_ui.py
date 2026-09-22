@@ -28,6 +28,74 @@ async def videogen_motion_progress_js():
     return button?.closest?.('.scene-editor') || null;
   }
 
+  function ensureProviderSelectors() {
+    document.querySelectorAll('.scene-editor').forEach(sceneEl => {
+      const panel = sceneEl.querySelector('.videogen-motion-panel');
+      if (!panel || panel.querySelector('.motion-provider-select')) return;
+
+      const controls = document.createElement('div');
+      controls.className = 'motion-provider-controls';
+      controls.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:9px 0 4px;';
+
+      const label = document.createElement('span');
+      label.className = 'muted';
+      label.textContent = 'Генератор:';
+
+      const select = document.createElement('select');
+      select.className = 'motion-provider-select';
+      select.title = 'Выбор image-to-video provider';
+      select.style.cssText = 'width:auto;min-width:210px;margin:0;padding:8px 30px 8px 10px;background:#0d1016;color:#fff;border:1px solid #4c3828;border-radius:9px;';
+      select.innerHTML = `
+        <option value="openai">Sora / OpenAI — облако</option>
+        <option value="wan">Wan Local GPU — локально</option>
+        <option value="auto">Auto — OpenMontage выбирает</option>
+      `;
+      select.value = 'openai';
+
+      const hint = document.createElement('span');
+      hint.className = 'muted motion-provider-hint';
+      hint.style.fontSize = '12px';
+      hint.textContent = 'Sora не использует локальную GPU.';
+
+      select.addEventListener('change', () => {
+        hint.textContent = select.value === 'wan'
+          ? 'Wan генерирует локально и нагрузит GPU/CPU/RAM.'
+          : select.value === 'openai'
+            ? 'Sora не использует локальную GPU.'
+            : 'OpenMontage выберет доступный provider автоматически.';
+      });
+
+      controls.append(label, select, hint);
+      const state = panel.querySelector('.motion-state');
+      if (state) state.insertAdjacentElement('beforebegin', controls);
+      else panel.prepend(controls);
+    });
+  }
+
+  function providerForGenerateUrl(url) {
+    const text = typeof url === 'string' ? url : (url?.url || '');
+    const match = text.match(/\/api\/motion\/projects\/[^/]+\/scenes\/([^/?]+)\/generate(?:\?|$)/);
+    if (!match) return null;
+    const sceneId = decodeURIComponent(match[1]);
+    const sceneEl = [...document.querySelectorAll('.scene-editor')]
+      .find(el => el.dataset.sceneId === sceneId);
+    return sceneEl?.querySelector('.motion-provider-select')?.value || 'openai';
+  }
+
+  // Existing motion UI owns the generate request. Add the selected provider to
+  // that request here so we do not duplicate the motion controls or remove Sora.
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = function(input, init) {
+    const provider = providerForGenerateUrl(input);
+    if (!provider) return nativeFetch(input, init);
+
+    const raw = typeof input === 'string' ? input : input.url;
+    const url = new URL(raw, location.origin);
+    url.searchParams.set('preferred_provider', provider);
+    const rewritten = url.pathname + url.search + url.hash;
+    return nativeFetch(rewritten, init);
+  };
+
   async function getStatus() {
     const response = await fetch('/api/motion/status', {cache: 'no-store'});
     if (!response.ok) throw new Error(`status HTTP ${response.status}`);
@@ -90,6 +158,10 @@ async def videogen_motion_progress_js():
     if (!sceneEl) return;
     startPolling(sceneEl);
   }, true);
+
+  const providerObserver = new MutationObserver(ensureProviderSelectors);
+  providerObserver.observe(document.documentElement, {childList:true, subtree:true});
+  ensureProviderSelectors();
 })();
 '''
     return Response(script, media_type="application/javascript", headers={"Cache-Control": "no-store"})
