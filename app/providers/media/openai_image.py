@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import mimetypes
 from pathlib import Path
 from uuid import uuid4
 
@@ -50,19 +51,28 @@ class OpenAIImageProvider:
         scene_id: str,
         media_dir: Path,
         reference_path: Path | None = None,
+        reference_paths: list[Path] | None = None,
     ) -> MediaAsset:
         if not self.enabled:
             raise RuntimeError("OpenAI Image is not configured. Set OPENAI_API_KEY in .env.")
+
+        refs: list[Path] = []
+        for path in ([reference_path] if reference_path is not None else []) + list(reference_paths or []):
+            if path is None:
+                continue
+            resolved = Path(path)
+            if resolved not in refs:
+                refs.append(resolved)
+        for path in refs:
+            if not path.is_file():
+                raise ValueError(f"Reference image not found: {path}")
 
         size, width, height = self._size_for_aspect_ratio(aspect_ratio)
         headers = {"Authorization": f"Bearer {settings.openai_api_key}"}
         timeout = httpx.Timeout(settings.openai_image_timeout_seconds)
 
         async with httpx.AsyncClient(timeout=timeout) as client:
-            if reference_path is not None:
-                if not reference_path.is_file():
-                    raise ValueError(f"Reference image not found: {reference_path}")
-
+            if refs:
                 endpoint = settings.openai_base_url.rstrip("/") + "/images/edits"
                 data_fields = {
                     "model": settings.openai_image_model,
@@ -74,8 +84,13 @@ class OpenAIImageProvider:
                 files = [
                     (
                         "image[]",
-                        (reference_path.name, reference_path.read_bytes(), "image/png"),
+                        (
+                            path.name,
+                            path.read_bytes(),
+                            mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+                        ),
                     )
+                    for path in refs
                 ]
                 response = await client.post(
                     endpoint,
@@ -116,7 +131,7 @@ class OpenAIImageProvider:
         output_path.write_bytes(image_bytes)
 
         local_url = f"/api/projects/{project_id}/media/{filename}"
-        mode = "reference edit" if reference_path is not None else "generation"
+        mode = f"reference edit ({len(refs)} refs)" if refs else "generation"
         return MediaAsset(
             provider=self.name,
             asset_id=filename,
