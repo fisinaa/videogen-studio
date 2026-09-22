@@ -138,8 +138,6 @@ class MotionService:
     def _openmontage_env() -> dict[str, str]:
         env = os.environ.copy()
         env["OPENMONTAGE_ROOT"] = str(settings.openmontage_root.resolve())
-        # Expose VideoGen-owned cloud credentials to the OpenMontage subprocess.
-        # This avoids duplicating secrets in the OpenMontage checkout.
         if settings.openai_api_key.strip():
             env["OPENAI_API_KEY"] = settings.openai_api_key.strip()
         if settings.fal_key.strip():
@@ -161,21 +159,18 @@ class MotionService:
         output: Path,
         prompt: str,
         duration: float,
+        preferred_provider: str | None = None,
     ) -> dict:
-        # OpenMontage providers often use native clip durations. For the current
-        # short-scene path use the closest practical whole-second request.
         requested = max(2, int(round(duration)))
+        selected_preference = (preferred_provider or settings.motion_openmontage_preferred_provider or "auto").strip().lower()
         job = {
             "prompt": prompt,
             "reference_image_path": str(source),
             "output_path": str(output),
             "aspect_ratio": project.request.aspect_ratio,
             "duration": requested,
-            "preferred_provider": settings.motion_openmontage_preferred_provider,
+            "preferred_provider": selected_preference,
         }
-        # Do not Path.resolve() the venv python executable. The venv entry point is
-        # commonly a symlink to /usr/bin/python; resolving it bypasses pyvenv.cfg
-        # discovery and silently launches the system interpreter without venv deps.
         openmontage_python = settings.openmontage_python.expanduser()
         cmd = [
             str(openmontage_python),
@@ -186,9 +181,11 @@ class MotionService:
 
         self._set_runtime(
             stage="provider_select",
-            detail="OpenMontage VideoSelector is choosing an available image-to-video provider.",
+            detail=f"OpenMontage VideoSelector is preparing provider: {selected_preference}.",
+            selected_provider=selected_preference if selected_preference != "auto" else None,
         )
-        async with self._maybe_gpu_slot(settings.motion_openmontage_reserve_gpu):
+        reserve_gpu = settings.motion_openmontage_reserve_gpu or selected_preference == "wan"
+        async with self._maybe_gpu_slot(reserve_gpu):
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -197,7 +194,11 @@ class MotionService:
             )
             self._set_runtime(
                 stage="generating",
-                detail="OpenMontage image-to-video provider is generating the scene clip.",
+                detail=(
+                    "OpenMontage local Wan provider is generating on this machine."
+                    if selected_preference == "wan"
+                    else "OpenMontage image-to-video provider is generating the scene clip."
+                ),
                 pid=process.pid,
             )
             try:
@@ -280,7 +281,14 @@ class MotionService:
         finally:
             prompt_path.unlink(missing_ok=True)
 
-    async def generate(self, project: Project, scene: Scene, *, duration_seconds: float | None = None) -> MediaAsset:
+    async def generate(
+        self,
+        project: Project,
+        scene: Scene,
+        *,
+        duration_seconds: float | None = None,
+        preferred_provider: str | None = None,
+    ) -> MediaAsset:
         if not self.enabled:
             raise MotionGenerationError(self.status()["note"])
 
@@ -305,13 +313,20 @@ class MotionService:
             "elapsed_seconds": 0.0,
             "output": filename,
             "error": None,
-            "selected_provider": None,
+            "selected_provider": preferred_provider,
             "selected_tool": None,
         }
 
         try:
             if self.provider == "openmontage":
-                payload = await self._run_openmontage(project, source, output, prompt, duration)
+                payload = await self._run_openmontage(
+                    project,
+                    source,
+                    output,
+                    prompt,
+                    duration,
+                    preferred_provider=preferred_provider,
+                )
             elif self.provider == "command":
                 payload = await self._run_command(source, output, prompt, duration, width, height)
             else:
