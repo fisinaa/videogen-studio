@@ -15,6 +15,19 @@ async def openmontage_status():
     return await openmontage.status()
 
 
+@router.post("/projects/{project_id}/studio")
+async def open_project_studio(project_id: str):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        return await openmontage.preview(project)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"OpenMontage Studio failed: {exc}") from exc
+
+
 @router.post("/projects/{project_id}/render")
 async def render_project(
     project_id: str,
