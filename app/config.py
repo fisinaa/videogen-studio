@@ -95,8 +95,8 @@ class Settings(BaseSettings):
     motion_provider: str = "openmontage"  # disabled | openmontage | command
     motion_command: str = ""
     motion_timeout_seconds: int = 3600
-    motion_default_duration_seconds: float = 5.0
-    motion_max_duration_seconds: float = 6.0
+    motion_default_duration_seconds: float = 10.0
+    motion_max_duration_seconds: float = 12.0
     motion_width_16_9: int = 768
     motion_height_16_9: int = 432
     motion_width_9_16: int = 432
