@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
+from app.routes.media_files import hard_delete_project_file
 from app.schemas import AudioAsset, MediaAsset
 from app.services.production import probe_duration
 from app.storage import project_store
@@ -76,14 +77,12 @@ async def list_library(project_id: str):
         for path in sorted(directory.iterdir(), key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True):
             if not path.is_file():
                 continue
-            kind = _file_kind(path)
-            if bucket == "render":
-                kind = "render"
-            url_bucket = "renders" if bucket == "render" else bucket
-            if bucket == "render":
-                url = f"/api/openmontage/projects/{project_id}/renders/{path.name}"
-            else:
-                url = f"/api/projects/{project_id}/{url_bucket}/{path.name}"
+            kind = "render" if bucket == "render" else _file_kind(path)
+            url = (
+                f"/api/openmontage/projects/{project_id}/renders/{path.name}"
+                if bucket == "render"
+                else f"/api/projects/{project_id}/{bucket}/{path.name}"
+            )
             items.append({
                 "filename": path.name,
                 "kind": kind,
@@ -107,7 +106,7 @@ async def upload_to_library(project_id: str, file: UploadFile = File(...)):
     content_type = (file.content_type or mimetypes.guess_type(filename)[0] or "").lower()
     ext = Path(filename).suffix.lower()
     is_audio = ext in _AUDIO_EXTS or content_type.startswith("audio/")
-    is_media = ext in _IMAGE_EXTS | _VIDEO_EXTS or content_type.startswith("image/") or content_type.startswith("video/")
+    is_media = ext in (_IMAGE_EXTS | _VIDEO_EXTS) or content_type.startswith("image/") or content_type.startswith("video/")
     if not (is_audio or is_media):
         raise HTTPException(status_code=415, detail="Supported uploads: image, video or audio")
 
@@ -130,6 +129,25 @@ async def upload_to_library(project_id: str, file: UploadFile = File(...)):
         await file.close()
 
     return {"uploaded": True, "filename": filename, "size": size, "kind": _file_kind(target)}
+
+
+@router.delete("/projects/{project_id}/{bucket}/{filename}")
+async def delete_library_file(project_id: str, bucket: str, filename: str):
+    if bucket in {"media", "audio"}:
+        return await hard_delete_project_file(project_id, filename)
+    if bucket != "render":
+        raise HTTPException(status_code=400, detail="Unknown library bucket")
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    path = project_store.render_file(project_id, filename)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Render not found")
+    try:
+        path.unlink()
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Render deletion failed: {exc}") from exc
+    return {"deleted": True, "filename": filename, "bucket": bucket}
 
 
 @router.post("/projects/{project_id}/assign/{scene_id}/{filename}")
