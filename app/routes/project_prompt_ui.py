@@ -3,7 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 
+from app.config import settings
 from app.providers.llm.llama_cpp import OUTLINE_SYSTEM_PROMPT
+from app.services.model_orchestrator import model_orchestrator
 from app.storage import project_store
 
 
@@ -37,6 +39,14 @@ async def project_llm_prompt(project_id: str):
         "aspect_ratio": project.request.aspect_ratio,
         "duration_seconds": project.request.duration_seconds,
         "language": project.request.language,
+        "requested_llm_profile": project.request.llm_profile,
+        "storyboard_llm": project.storyboard.llm_generation,
+        "llm_defaults": {
+            "storyboard": settings.llm_profile_storyboard,
+            "visual_prompt": settings.llm_profile_visual_prompt,
+            "rewrite": settings.llm_profile_rewrite,
+        },
+        "llm_status": await model_orchestrator.status(),
     }
 
 
@@ -48,14 +58,20 @@ async def project_prompt_js():
   const projectId = () => new URL(location.href).searchParams.get('project') || document.querySelector('.recent-project.active')?.dataset?.projectId || null;
   let lastId = null;
 
-  async function load() {
+  function runLabel(meta) {
+    if (!meta) return '<span class="muted">Для старого проекта metadata модели не сохранена.</span>';
+    const seconds = Number(meta.duration_seconds || 0).toFixed(1);
+    return `<b>${esc(meta.profile)}</b> · ${esc(meta.model_name)} · ${seconds} сек · ${esc(meta.calls || 0)} LLM выз.`;
+  }
+
+  async function load(force=false) {
     const id = projectId();
     if (!id) {
       document.querySelector('.videogen-project-prompt')?.remove();
       lastId = null;
       return;
     }
-    if (id === lastId && document.querySelector('.videogen-project-prompt')) return;
+    if (!force && id === lastId && document.querySelector('.videogen-project-prompt')) return;
 
     let data;
     try {
@@ -69,7 +85,14 @@ async def project_prompt_js():
     const card = document.createElement('div');
     card.className = 'videogen-project-prompt';
     card.style.cssText = 'margin:12px 0;padding:13px;border:1px solid #35405a;border-radius:12px;background:#0d121a;';
+    const active = data.llm_status?.active_profile
+      ? `${esc(data.llm_status.active_profile)} · ${esc(data.llm_status.active_model || '')}`
+      : 'LLM сейчас выключена (on-demand)';
     card.innerHTML = `
+      <div style="display:flex;gap:12px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;margin-bottom:9px">
+        <div><b>LLM storyboard</b><div style="margin-top:4px">${runLabel(data.storyboard_llm)}</div></div>
+        <div class="muted" style="font-size:12px;text-align:right">Сейчас: ${active}<br>Defaults: storyboard=${esc(data.llm_defaults?.storyboard)} · visual=${esc(data.llm_defaults?.visual_prompt)} · rewrite=${esc(data.llm_defaults?.rewrite)}</div>
+      </div>
       <details>
         <summary style="cursor:pointer"><b>Промпт проекта / что отправлено LLM</b></summary>
         <div style="margin-top:10px">
@@ -90,10 +113,10 @@ async def project_prompt_js():
     else document.getElementById('result')?.prepend(card);
   }
 
-  const observer = new MutationObserver(load);
+  const observer = new MutationObserver(() => load(false));
   observer.observe(document.documentElement, {childList:true,subtree:true});
-  load();
-  setInterval(load, 1000);
+  load(true);
+  setInterval(() => load(true), 3000);
 })();
 '''
     return Response(script, media_type="application/javascript", headers={"Cache-Control": "no-store"})
