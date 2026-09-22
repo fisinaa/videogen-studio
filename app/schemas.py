@@ -8,6 +8,16 @@ AspectRatio = Literal["9:16", "16:9", "1:1"]
 MediaType = Literal["video", "image"]
 MotionMode = Literal["static", "camera_motion", "image_to_video"]
 ReferenceKind = Literal["character", "object", "location", "style"]
+LLMProfile = Literal["fast", "quality"]
+
+
+class LLMRunInfo(BaseModel):
+    profile: LLMProfile
+    model_name: str
+    model_path: str = ""
+    operation: str = ""
+    duration_seconds: float = 0.0
+    calls: int = 0
 
 
 class CreateProjectRequest(BaseModel):
@@ -16,6 +26,7 @@ class CreateProjectRequest(BaseModel):
     aspect_ratio: AspectRatio = "16:9"
     duration_seconds: int = Field(default=60, ge=10, le=7200)
     language: str = Field(default="ru", min_length=2, max_length=16)
+    llm_profile: LLMProfile | None = None
 
 
 class MediaAsset(BaseModel):
@@ -77,6 +88,7 @@ class Scene(BaseModel):
     motion_mode: MotionMode = "camera_motion"
     motion_candidates: list[MediaAsset] = Field(default_factory=list)
     selected_motion_media: MediaAsset | None = None
+    llm_generation: LLMRunInfo | None = None
 
 
 class SceneUpdate(BaseModel):
@@ -99,6 +111,7 @@ class Storyboard(BaseModel):
     visual_bible: str = ""
     characters: list[str] = Field(default_factory=list)
     scenes: list[Scene]
+    llm_generation: LLMRunInfo | None = None
 
 
 class Project(BaseModel):
