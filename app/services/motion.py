@@ -138,10 +138,12 @@ class MotionService:
     def _openmontage_env() -> dict[str, str]:
         env = os.environ.copy()
         env["OPENMONTAGE_ROOT"] = str(settings.openmontage_root.resolve())
-        # VideoGen already owns the OpenAI credential; expose it to OpenMontage
-        # without requiring a second copy in the OpenMontage checkout.
+        # Expose VideoGen-owned cloud credentials to the OpenMontage subprocess.
+        # This avoids duplicating secrets in the OpenMontage checkout.
         if settings.openai_api_key.strip():
             env["OPENAI_API_KEY"] = settings.openai_api_key.strip()
+        if settings.fal_key.strip():
+            env["FAL_KEY"] = settings.fal_key.strip()
         return env
 
     @asynccontextmanager
