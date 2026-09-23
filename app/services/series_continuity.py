@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from app.schemas import Project
 from app.storage import project_store
+
+
+_ALIAS_RE = re.compile(r"@([A-Za-z][A-Za-z0-9_-]{1,63})")
 
 
 def _root_for(project: Project) -> Project | None:
@@ -15,11 +19,15 @@ def _root_for(project: Project) -> Project | None:
     return project_store.load(root_id)
 
 
+def _episode_number(project: Project, root: Project) -> int:
+    return int(project.episode_number or (1 if project.id == root.id else 1))
+
+
 def _active_references(project: Project):
     root = _root_for(project)
     if root is None:
         return []
-    episode = int(project.episode_number or (1 if project.id == root.id else 1))
+    episode = _episode_number(project, root)
     result = []
     for ref in root.series_references:
         if episode < ref.from_episode:
@@ -28,6 +36,50 @@ def _active_references(project: Project):
             continue
         result.append(ref)
     return result
+
+
+def _active_text_references(project: Project):
+    root = _root_for(project)
+    if root is None:
+        return []
+    episode = _episode_number(project, root)
+    result = []
+    for ref in root.series_text_references:
+        if episode < ref.from_episode:
+            continue
+        if ref.to_episode is not None and episode > ref.to_episode:
+            continue
+        result.append(ref)
+    return result
+
+
+def expand_visual_aliases(project: Project, text: str, language: str = "en") -> str:
+    """Expand @keys recursively using active series text references.
+
+    Composite blocks can contain other keys, e.g. ``@visual_tim_boat`` ->
+    ``@char_tim, @prop_boat, @style_cartoon``. Unknown keys are intentionally
+    left untouched so typos remain visible in the UI instead of silently vanishing.
+    """
+    refs = {ref.key.lower(): ref for ref in _active_text_references(project)}
+    if not refs or "@" not in text:
+        return text
+
+    def expand_value(value: str, stack: tuple[str, ...]) -> str:
+        def replace(match: re.Match) -> str:
+            key = match.group(1).lower()
+            ref = refs.get(key)
+            if ref is None or key in stack:
+                return match.group(0)
+            preferred = ref.text_en if language == "en" else ref.text_ru
+            fallback = ref.text_ru if language == "en" else ref.text_en
+            replacement = (preferred or fallback).strip()
+            if not replacement:
+                return match.group(0)
+            return expand_value(replacement, (*stack, key))
+
+        return _ALIAS_RE.sub(replace, value)
+
+    return expand_value(text, ())
 
 
 def install_series_continuity() -> None:
@@ -62,6 +114,7 @@ def install_series_continuity() -> None:
         refs = _active_references(project)
         effective_reference = use_reference or bool(root and (root.character_reference or refs))
         prompt, reference_path = original_image_prompt(project, scene, effective_reference)
+        prompt = expand_visual_aliases(project, prompt, language="en")
         if refs:
             lines = [
                 "SERIES CONTINUITY REFERENCES. Keep these recurring designs stable and do not redesign them:",
