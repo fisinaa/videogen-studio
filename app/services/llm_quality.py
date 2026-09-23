@@ -22,6 +22,8 @@ STRICT CONTINUITY RULES:
 - Preserve recurring props, locations and character appearance exactly when they are supplied.
 - Every scene must advance the existing story with a distinct event; do not repeat another scene's narration, action or composition.
 - Prefer the user's established world and plot over introducing unrelated subplots, creatures, quests or lore.
+- If the user supplies canonical visual aliases such as @char_tim, @prop_boat or @visual_tim_boat, preserve those @keys verbatim in relevant CHARACTER/SCENE/VISUAL fields instead of rewriting the full canonical description. The backend expands aliases before image generation.
+- A composite @visual_* block may stand for several character, prop, location and style references; do not expand or redesign it yourself.
 """
 
 
