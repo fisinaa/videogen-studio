@@ -3,12 +3,14 @@ from starlette.responses import Response
 from app.main import app
 from app.services.llm_quality import install_llm_quality
 from app.services.series_continuity import install_series_continuity
+from app.services.storyboard_quality import install_storyboard_quality
 
 
 # Patch app.main helpers before route modules import references to them (pipeline.py
 # imports _generate_scene_image directly).
 install_series_continuity()
 install_llm_quality()
+install_storyboard_quality()
 
 from app.routes.canon_edit_ui import router as canon_edit_ui_router
 from app.routes.media_files import router as media_files_router
