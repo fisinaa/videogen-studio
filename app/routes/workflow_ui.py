@@ -77,7 +77,10 @@ async def videogen_workflow_js():
       <label>RU<textarea class="s-ru" style="min-height:68px">${esc(item.text_ru || '')}</textarea></label>
       <label>EN<textarea class="s-en" style="min-height:68px">${esc(item.text_en || '')}</textarea></label>
       <label style="display:flex;align-items:center;gap:7px"><input class="s-block" type="checkbox" style="width:auto;margin:0" ${item.is_block?'checked':''}> Готовый visual block</label>
-      <button type="button" class="accept-text-suggestion" style="margin-top:8px;padding:7px 10px">Принять</button>
+      <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:8px">
+        <button type="button" class="delete-text-suggestion danger" style="padding:7px 10px">Удалить</button>
+        <button type="button" class="accept-text-suggestion" style="padding:7px 10px">Принять</button>
+      </div>
     </div>`;
   }
 
@@ -109,6 +112,7 @@ async def videogen_workflow_js():
         card.dataset.accepted = '1';
         card.style.opacity = '.62';
         if (button) button.textContent = 'Принято';
+        card.querySelector('.delete-text-suggestion')?.setAttribute('disabled', 'disabled');
       }
       return true;
     } catch (e) {
@@ -167,7 +171,7 @@ async def videogen_workflow_js():
       try {
         const data = await jsonFetch(`/api/series/${encodeURIComponent(id)}/text-references/generate`, {method:'POST'});
         const items = data.suggestions || [];
-        state.textContent = `Предложено: ${items.length} · LLM profile: ${data.profile}. Можешь отредактировать каждую карточку перед принятием.`;
+        state.textContent = `Предложено: ${items.length} · LLM profile: ${data.profile}. Можешь удалить лишнее или отредактировать карточку перед принятием.`;
         results.innerHTML = items.map(suggestionCard).join('');
         if (items.length > 1) {
           const acceptAll = document.createElement('button');
@@ -181,12 +185,21 @@ async def videogen_workflow_js():
             let accepted = 0;
             for (let i = 0; i < items.length; i++) {
               const card = results.querySelector(`.series-text-suggestion[data-index="${i}"]`);
-              if (!card || card.dataset.accepted === '1') continue;
+              if (!card || card.dataset.accepted === '1' || card.dataset.deleted === '1') continue;
               if (await acceptSuggestion(data.series_id, items[i], card, state)) accepted++;
             }
             state.textContent = `Добавлено в canon: ${accepted}. Теперь нажми «Привязать canon к сценам».`;
           };
         }
+        results.querySelectorAll('.delete-text-suggestion').forEach(btn => btn.onclick = () => {
+          const card = btn.closest('.series-text-suggestion');
+          if (!card || card.dataset.accepted === '1') return;
+          const key = card.querySelector('.s-key')?.value?.trim() || 'reference';
+          if (!confirm(`Убрать предложение ${key} из текущего списка? В canon оно не попадёт.`)) return;
+          card.dataset.deleted = '1';
+          card.remove();
+          state.textContent = `${key} исключён из предложений.`;
+        });
         results.querySelectorAll('.accept-text-suggestion').forEach(btn => btn.onclick = async () => {
           const card = btn.closest('.series-text-suggestion');
           const item = items[Number(card.dataset.index)];
