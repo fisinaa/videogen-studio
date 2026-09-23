@@ -96,13 +96,13 @@ def _text_reference_context(root: Project, episode_number: int) -> str:
     if not active:
         return ""
     lines = [
-        "SERIES TEXT REFERENCES / VISUAL ALIASES:",
-        "Use these @keys verbatim in VISUAL_RU and VISUAL_EN instead of repeating their full canonical descriptions. The backend expands them before image generation.",
+        "SERIES TEXT REFERENCES / VISUAL CANON:",
+        "Use these descriptions as canonical continuity facts, but keep VISUAL_RU and VISUAL_EN as normal human-readable prose. Do NOT insert @keys into the scene text; keys are assigned separately after review.",
     ]
     for ref in active:
         kind = "BLOCK" if ref.is_block else ref.kind.upper()
         text = ref.text_en or ref.text_ru
-        lines.append(f"- @{ref.key} [{kind}] = {text}")
+        lines.append(f"- @{ref.key} [{kind}] {ref.name} = {text}")
     return "\n".join(lines)
 
 
