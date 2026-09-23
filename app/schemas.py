@@ -57,9 +57,11 @@ class SeriesReference(BaseModel):
 class SeriesTextReference(BaseModel):
     """Reusable textual canon entry or composite visual alias.
 
-    Keys are referenced from scene visual prompts as ``@char_tim`` or
-    ``@visual_tim_boat``. ``text_ru`` / ``text_en`` may themselves contain other
-    @keys, which are expanded recursively immediately before image generation.
+    Keys are stable machine-readable identifiers such as ``char_tim`` or
+    ``visual_tim_boat``. Human-readable scene prose stays clean; scenes store the
+    applicable keys separately in ``reference_keys``. ``text_ru`` / ``text_en``
+    may contain other @keys, which are expanded recursively immediately before
+    image generation.
     """
 
     id: str
@@ -97,6 +99,7 @@ class Scene(BaseModel):
     visual_prompt_en: str = ""
     negative_prompt_en: str = ""
     media_search_query: str = ""
+    reference_keys: list[str] = Field(default_factory=list)
     selected_media: MediaAsset | None = None
     media_candidates: list[MediaAsset] = Field(default_factory=list)
     selected_audio: AudioAsset | None = None
@@ -121,6 +124,7 @@ class SceneUpdate(BaseModel):
     visual_prompt_en: str | None = Field(default=None, max_length=10000)
     negative_prompt_en: str | None = Field(default=None, max_length=5000)
     media_search_query: str = Field(default="", max_length=1000)
+    reference_keys: list[str] | None = None
 
 
 class Storyboard(BaseModel):
