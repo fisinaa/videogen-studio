@@ -13,6 +13,8 @@ async def videogen_workflow_js():
 (() => {
   const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const projectId = () => new URL(location.href).searchParams.get('project') || document.querySelector('.recent-project.active')?.dataset?.projectId || null;
+  let badgeLoadFor = '';
+  let enhanceQueued = false;
 
   async function jsonFetch(url, options={}) {
     const response = await fetch(url, options);
@@ -66,26 +68,46 @@ async def videogen_workflow_js():
   }
 
   function suggestionCard(item, index) {
-    const tag = '@' + item.key;
     return `<div class="series-text-suggestion" data-index="${index}" style="border:1px solid #343b49;border-radius:10px;padding:10px;background:#0d1118">
-      <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap"><code style="font-size:13px">${esc(tag)}</code><span class="badge">${item.is_block ? 'BLOCK' : esc(item.kind)}</span><b>${esc(item.name)}</b></div>
-      <div style="font-size:12px;margin-top:7px"><b>RU:</b> ${esc(item.text_ru || '')}</div>
-      <div style="font-size:12px;margin-top:5px"><b>EN:</b> ${esc(item.text_en || '')}</div>
+      <div style="display:grid;grid-template-columns:1fr 1.2fr .8fr;gap:7px">
+        <label>Ключ<input class="s-key" value="${esc(item.key)}"></label>
+        <label>Название<input class="s-name" value="${esc(item.name)}"></label>
+        <label>Тип<select class="s-kind"><option value="character" ${item.kind==='character'?'selected':''}>character</option><option value="object" ${item.kind==='object'?'selected':''}>object</option><option value="location" ${item.kind==='location'?'selected':''}>location</option><option value="style" ${item.kind==='style'?'selected':''}>style</option></select></label>
+      </div>
+      <label>RU<textarea class="s-ru" style="min-height:68px">${esc(item.text_ru || '')}</textarea></label>
+      <label>EN<textarea class="s-en" style="min-height:68px">${esc(item.text_en || '')}</textarea></label>
+      <label style="display:flex;align-items:center;gap:7px"><input class="s-block" type="checkbox" style="width:auto;margin:0" ${item.is_block?'checked':''}> Готовый visual block</label>
       <button type="button" class="accept-text-suggestion" style="margin-top:8px;padding:7px 10px">Принять</button>
     </div>`;
   }
 
-  async function acceptSuggestion(seriesId, item, card, state) {
+  function readSuggestion(card, original) {
+    return {
+      key: card.querySelector('.s-key').value.trim().replace(/^@/, ''),
+      name: card.querySelector('.s-name').value.trim(),
+      kind: card.querySelector('.s-kind').value,
+      text_ru: card.querySelector('.s-ru').value.trim(),
+      text_en: card.querySelector('.s-en').value.trim(),
+      is_block: card.querySelector('.s-block').checked,
+      from_episode: Number(original.from_episode || 1),
+      to_episode: original.to_episode ?? null,
+    };
+  }
+
+  async function acceptSuggestion(seriesId, original, card, state) {
     const button = card?.querySelector('.accept-text-suggestion');
     if (button) button.disabled = true;
     try {
+      const item = readSuggestion(card, original);
+      if (!item.key || !item.name || (!item.text_ru && !item.text_en)) throw new Error('Заполни ключ, название и описание');
       await jsonFetch(`/api/series/${encodeURIComponent(seriesId)}/text-references`, {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
         body: JSON.stringify(item),
       });
       if (card) {
-        card.style.opacity = '.5';
+        card.dataset.accepted = '1';
+        card.style.opacity = '.62';
         if (button) button.textContent = 'Принято';
       }
       return true;
@@ -96,8 +118,25 @@ async def videogen_workflow_js():
     }
   }
 
+  async function assignSceneReferences(state, button) {
+    const id = projectId();
+    if (!id) return;
+    button.disabled = true;
+    state.textContent = 'Qwen сопоставляет утверждённый canon с каждой сценой. Текст сцен не меняется...';
+    try {
+      const data = await jsonFetch(`/api/series/${encodeURIComponent(id)}/text-references/assign-scenes`, {method:'POST'});
+      state.textContent = `Привязано: ${data.assigned_scenes}/${data.total_scenes} сцен · LLM profile: ${data.profile}`;
+      badgeLoadFor = '';
+      await refreshSceneReferenceBadges(true);
+    } catch (e) {
+      state.textContent = `Ошибка: ${e.message}`;
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   function enhanceSeriesTextAI() {
-    const panel = document.querySelector('.videogen-series-panel');
+    const panel = document.querySelector('.videogen-text-refs-panel') || document.querySelector('.videogen-series-panel');
     if (!panel || panel.querySelector('.series-text-ai')) return;
 
     const box = document.createElement('div');
@@ -105,36 +144,36 @@ async def videogen_workflow_js():
     box.style.cssText = 'margin-top:12px;padding:11px;border:1px solid #3b3456;border-radius:10px;background:#11101b;';
     box.innerHTML = `
       <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap">
-        <div><b>AI Text References</b><div class="muted" style="font-size:12px;margin-top:3px">Qwen анализирует канон и предлагает @char_ / @prop_ / @loc_ / @style_ / @visual_ блоки. Ничего не добавляется в canon без подтверждения.</div></div>
-        <button type="button" class="series-text-ai-generate">Сгенерировать Text References из проекта</button>
+        <div><b>AI Canon Builder</b><div class="muted" style="font-size:12px;margin-top:3px">Сначала проверь и поправь storyboard. Затем Qwen пройдёт по уже утверждённым сценам и предложит общий visual canon. Сцены автоматически не переписываются.</div></div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap"><button type="button" class="series-text-ai-generate">Собрать Text References из сцен</button><button type="button" class="series-text-ai-assign secondary">Привязать canon к сценам</button></div>
       </div>
       <div class="series-text-ai-state muted" style="margin-top:7px"></div>
-      <div class="series-text-ai-results" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:8px;margin-top:9px"></div>`;
+      <div class="series-text-ai-results" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:8px;margin-top:9px"></div>`;
 
-    const details = panel.querySelector('details');
-    if (details) panel.insertBefore(box, details);
-    else panel.appendChild(box);
+    panel.appendChild(box);
 
     const state = box.querySelector('.series-text-ai-state');
     const results = box.querySelector('.series-text-ai-results');
     const button = box.querySelector('.series-text-ai-generate');
+    const assignButton = box.querySelector('.series-text-ai-assign');
+    assignButton.onclick = () => assignSceneReferences(state, assignButton);
 
     button.onclick = async () => {
       const id = projectId();
       if (!id) return;
       button.disabled = true;
-      state.textContent = 'Qwen анализирует сериал и собирает канонические ключи...';
+      state.textContent = 'Qwen читает проверенные сцены: action, narration, dialogue и visual prompts...';
       results.innerHTML = '';
       try {
         const data = await jsonFetch(`/api/series/${encodeURIComponent(id)}/text-references/generate`, {method:'POST'});
         const items = data.suggestions || [];
-        state.textContent = `Предложено: ${items.length} · LLM profile: ${data.profile}`;
+        state.textContent = `Предложено: ${items.length} · LLM profile: ${data.profile}. Можешь отредактировать каждую карточку перед принятием.`;
         results.innerHTML = items.map(suggestionCard).join('');
         if (items.length > 1) {
           const acceptAll = document.createElement('button');
           acceptAll.type = 'button';
           acceptAll.className = 'series-text-ai-accept-all';
-          acceptAll.textContent = 'Принять все предложения';
+          acceptAll.textContent = 'Принять все после проверки';
           acceptAll.style.cssText = 'grid-column:1/-1;background:#2d7651';
           results.prepend(acceptAll);
           acceptAll.onclick = async () => {
@@ -142,18 +181,17 @@ async def videogen_workflow_js():
             let accepted = 0;
             for (let i = 0; i < items.length; i++) {
               const card = results.querySelector(`.series-text-suggestion[data-index="${i}"]`);
-              if (card?.querySelector('.accept-text-suggestion')?.textContent === 'Принято') continue;
+              if (!card || card.dataset.accepted === '1') continue;
               if (await acceptSuggestion(data.series_id, items[i], card, state)) accepted++;
             }
-            state.textContent = `Добавлено в canon: ${accepted}. Обновляю страницу...`;
-            setTimeout(() => location.reload(), 500);
+            state.textContent = `Добавлено в canon: ${accepted}. Теперь нажми «Привязать canon к сценам».`;
           };
         }
         results.querySelectorAll('.accept-text-suggestion').forEach(btn => btn.onclick = async () => {
           const card = btn.closest('.series-text-suggestion');
           const item = items[Number(card.dataset.index)];
           const ok = await acceptSuggestion(data.series_id, item, card, state);
-          if (ok) state.textContent = `${'@' + item.key} добавлен в canon.`;
+          if (ok) state.textContent = `@${card.querySelector('.s-key').value.trim().replace(/^@/, '')} добавлен в canon.`;
         });
       } catch (e) {
         state.textContent = `Ошибка: ${e.message}`;
@@ -163,13 +201,73 @@ async def videogen_workflow_js():
     };
   }
 
+  function tooltipFor(ref) {
+    const description = ref.text_ru || ref.text_en || '';
+    const prefix = ref.is_block ? 'BLOCK' : ref.kind;
+    return `${'@' + ref.key} · ${prefix}\n${ref.name}\n${description}`;
+  }
+
+  async function refreshSceneReferenceBadges(force=false) {
+    const id = projectId();
+    const scenes = [...document.querySelectorAll('.scene-editor[data-scene-id]')];
+    if (!id || !scenes.length) return;
+    const signature = `${id}:${scenes.map(x => x.dataset.sceneId).join(',')}`;
+    if (!force && badgeLoadFor === signature && scenes.every(x => x.querySelector('.scene-reference-badges'))) return;
+    badgeLoadFor = signature;
+    try {
+      const [project, info] = await Promise.all([
+        jsonFetch(`/api/projects/${encodeURIComponent(id)}`, {cache:'no-store'}),
+        jsonFetch(`/api/series/${encodeURIComponent(id)}`, {cache:'no-store'}),
+      ]);
+      const refMap = new Map((info.text_references || []).map(ref => [String(ref.key).toLowerCase(), ref]));
+      const sceneMap = new Map((project.storyboard?.scenes || []).map(scene => [scene.id, scene]));
+      scenes.forEach(sceneEl => {
+        const scene = sceneMap.get(sceneEl.dataset.sceneId);
+        let row = sceneEl.querySelector('.scene-reference-badges');
+        if (!row) {
+          row = document.createElement('div');
+          row.className = 'scene-reference-badges';
+          row.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:8px 0 10px;';
+          const promptFields = sceneEl.querySelector('.prompt-fields');
+          if (promptFields) sceneEl.insertBefore(row, promptFields);
+          else sceneEl.querySelector('.scene-head')?.insertAdjacentElement('afterend', row);
+        }
+        const keys = scene?.reference_keys || [];
+        row.innerHTML = keys.length
+          ? `<span class="muted" style="font-size:12px">References:</span>` + keys.map(key => {
+              const ref = refMap.get(String(key).toLowerCase());
+              const title = ref ? tooltipFor(ref) : `@${key}`;
+              return `<span class="badge scene-ref-badge" title="${esc(title)}" style="cursor:help">@${esc(key)}</span>`;
+            }).join('')
+          : '<span class="muted" style="font-size:12px">References: пока не назначены</span>';
+      });
+    } catch (_) {
+      badgeLoadFor = '';
+    }
+  }
+
   function enhance() {
     enhanceBulkImageMenu();
     enhanceSeriesTextAI();
+    refreshSceneReferenceBadges();
   }
 
-  const observer = new MutationObserver(enhance);
-  observer.observe(document.documentElement, {childList:true, subtree:true});
+  function scheduleEnhance() {
+    if (enhanceQueued) return;
+    enhanceQueued = true;
+    requestAnimationFrame(() => {
+      enhanceQueued = false;
+      enhance();
+    });
+  }
+
+  const root = document.getElementById('result') || document.body;
+  const observer = new MutationObserver(mutations => {
+    if (mutations.some(m => [...m.addedNodes].some(n => n.nodeType === 1 && (n.matches?.('.scene-editor,.project-actions,.videogen-text-refs-panel,.videogen-series-panel') || n.querySelector?.('.scene-editor,.project-actions,.videogen-text-refs-panel,.videogen-series-panel'))))) {
+      scheduleEnhance();
+    }
+  });
+  observer.observe(root, {childList:true, subtree:true});
   enhance();
 })();
 '''
