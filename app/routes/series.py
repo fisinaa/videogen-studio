@@ -8,7 +8,14 @@ from pydantic import BaseModel, Field
 
 from app.main import _visual_bible, llm
 from app.providers.media.router import media_router
-from app.schemas import CreateProjectRequest, MediaAsset, Project, ReferenceKind, SeriesReference
+from app.schemas import (
+    CreateProjectRequest,
+    MediaAsset,
+    Project,
+    ReferenceKind,
+    SeriesReference,
+    SeriesTextReference,
+)
 from app.storage import project_store
 
 
@@ -27,6 +34,17 @@ class AddReferencePayload(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: str = Field(default="", max_length=4000)
     kind: ReferenceKind = "object"
+    from_episode: int = Field(default=1, ge=1)
+    to_episode: int | None = Field(default=None, ge=1)
+
+
+class AddTextReferencePayload(BaseModel):
+    key: str = Field(pattern=r"^[a-zA-Z][a-zA-Z0-9_-]{1,63}$")
+    name: str = Field(min_length=1, max_length=200)
+    kind: ReferenceKind = "character"
+    text_ru: str = Field(default="", max_length=6000)
+    text_en: str = Field(default="", max_length=6000)
+    is_block: bool = False
     from_episode: int = Field(default=1, ge=1)
     to_episode: int | None = Field(default=None, ge=1)
 
@@ -54,14 +72,16 @@ def _episode_projects(root_id: str) -> list[Project]:
     return result
 
 
+def _active_for_episode(item, episode_number: int) -> bool:
+    if episode_number < item.from_episode:
+        return False
+    if item.to_episode is not None and episode_number > item.to_episode:
+        return False
+    return True
+
+
 def _reference_context(root: Project, episode_number: int) -> str:
-    active = []
-    for ref in root.series_references:
-        if episode_number < ref.from_episode:
-            continue
-        if ref.to_episode is not None and episode_number > ref.to_episode:
-            continue
-        active.append(ref)
+    active = [ref for ref in root.series_references if _active_for_episode(ref, episode_number)]
     if not active:
         return ""
     lines = ["SERIES CONTINUITY REFERENCES (must remain visually stable):"]
@@ -71,11 +91,27 @@ def _reference_context(root: Project, episode_number: int) -> str:
     return "\n".join(lines)
 
 
+def _text_reference_context(root: Project, episode_number: int) -> str:
+    active = [ref for ref in root.series_text_references if _active_for_episode(ref, episode_number)]
+    if not active:
+        return ""
+    lines = [
+        "SERIES TEXT REFERENCES / VISUAL ALIASES:",
+        "Use these @keys verbatim in VISUAL_RU and VISUAL_EN instead of repeating their full canonical descriptions. The backend expands them before image generation.",
+    ]
+    for ref in active:
+        kind = "BLOCK" if ref.is_block else ref.kind.upper()
+        text = ref.text_en or ref.text_ru
+        lines.append(f"- @{ref.key} [{kind}] = {text}")
+    return "\n".join(lines)
+
+
 def _sync_episode_from_root(episode: Project, root: Project) -> Project:
     episode.series_id = root.id
     episode.series_title = root.series_title or root.storyboard.title
     episode.character_reference = root.character_reference
     episode.series_references = list(root.series_references)
+    episode.series_text_references = list(root.series_text_references)
     return episode
 
 
@@ -86,14 +122,12 @@ async def initialize_series(project_id: str):
         raise HTTPException(status_code=404, detail="Project not found")
     if project.request.project_type not in {"series", "series_episode"}:
         raise HTTPException(status_code=400, detail="Project type is not series")
-
     if project.request.project_type == "series":
         project.series_id = project.id
         project.episode_number = project.episode_number or 1
         project.series_title = project.series_title or project.storyboard.title
     elif not project.series_id:
         raise HTTPException(status_code=400, detail="Series episode has no series_id")
-
     project_store.save(project)
     return {"project": project, "series": await get_series(project.series_id or project.id)}
 
@@ -106,14 +140,12 @@ async def series_tree():
             projects.append(Project.model_validate(raw))
         except Exception:
             continue
-
     roots: dict[str, Project] = {}
     for project in projects:
         if project.request.project_type == "series":
             roots[project.id] = project
         elif project.series_id and project.series_id == project.id:
             roots[project.id] = project
-
     groups = []
     for root_id, root in roots.items():
         episodes = [p for p in projects if p.id == root_id or p.series_id == root_id]
@@ -123,14 +155,8 @@ async def series_tree():
             "title": root.series_title or root.storyboard.title,
             "character_reference": root.character_reference,
             "references": root.series_references,
-            "episodes": [
-                {
-                    "id": p.id,
-                    "episode_number": p.episode_number or (1 if p.id == root_id else None),
-                    "title": p.storyboard.title,
-                }
-                for p in episodes
-            ],
+            "text_references": root.series_text_references,
+            "episodes": [{"id": p.id, "episode_number": p.episode_number or (1 if p.id == root_id else None), "title": p.storyboard.title} for p in episodes],
         })
     groups.sort(key=lambda x: x["title"].lower())
     return {"series": groups}
@@ -149,6 +175,7 @@ async def get_series(project_id: str):
         "root": root,
         "character_reference": root.character_reference,
         "references": root.series_references,
+        "text_references": root.series_text_references,
         "episodes": episodes,
     }
 
@@ -159,7 +186,6 @@ async def generate_series_character_reference(project_id: str):
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     root = _series_root(project)
-
     characters = "; ".join(root.storyboard.characters).strip() or "the main recurring character described by the series"
     prompt = "\n".join([
         "Create the canonical character reference image for a recurring animated series.",
@@ -170,17 +196,9 @@ async def generate_series_character_reference(project_id: str):
     ])
     provider = "openai" if media_router.openai_image.enabled else "local_fast"
     try:
-        asset = await media_router.generate_image(
-            prompt=prompt,
-            aspect_ratio="1:1",
-            project_id=root.id,
-            scene_id="series-character-reference",
-            media_dir=project_store.media_dir(root.id),
-            provider=provider,
-        )
+        asset = await media_router.generate_image(prompt=prompt, aspect_ratio="1:1", project_id=root.id, scene_id="series-character-reference", media_dir=project_store.media_dir(root.id), provider=provider)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Series Character Reference generation failed: {exc}") from exc
-
     root.character_reference = asset
     root.series_id = root.id
     root.episode_number = root.episode_number or 1
@@ -201,43 +219,27 @@ async def create_episode(project_id: str, payload: CreateEpisodePayload):
         root.episode_number = root.episode_number or 1
         root.series_title = root.series_title or root.storyboard.title
         project_store.save(root)
-
     episodes = _episode_projects(root.id)
     next_number = max((item.episode_number or 0 for item in episodes), default=0) + 1
     user_prompt = payload.prompt.strip() or f"Продолжи сериал «{root.series_title or root.storyboard.title}». Создай серию {next_number}, сохраняя персонажей, мир и визуальную непрерывность предыдущих серий."
     continuity = _reference_context(root, next_number)
+    text_refs = _text_reference_context(root, next_number)
     prompt = "\n\n".join(part for part in [
         user_prompt,
         f"SERIES TITLE: {root.series_title or root.storyboard.title}",
         f"SERIES VISUAL STYLE: {root.storyboard.visual_style}",
         f"CANONICAL CHARACTERS: {'; '.join(root.storyboard.characters)}",
         continuity,
+        text_refs,
         f"This is episode {next_number}. Do not redesign recurring characters or recurring objects.",
     ] if part)
-
-    request = CreateProjectRequest(
-        prompt=prompt,
-        project_type="series_episode",
-        aspect_ratio=root.request.aspect_ratio,
-        duration_seconds=payload.duration_seconds or root.request.duration_seconds,
-        language=root.request.language,
-    )
+    request = CreateProjectRequest(prompt=prompt, project_type="series_episode", aspect_ratio=root.request.aspect_ratio, duration_seconds=payload.duration_seconds or root.request.duration_seconds, language=root.request.language, llm_profile=root.request.llm_profile)
     try:
         storyboard = await llm.create_storyboard(request)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Episode storyboard generation failed: {exc}") from exc
-
     storyboard.visual_bible = _visual_bible(storyboard)
-    child = Project(
-        id=uuid4().hex[:12],
-        request=request,
-        storyboard=storyboard,
-        character_reference=root.character_reference,
-        series_id=root.id,
-        series_title=root.series_title or root.storyboard.title,
-        episode_number=next_number,
-        series_references=list(root.series_references),
-    )
+    child = Project(id=uuid4().hex[:12], request=request, storyboard=storyboard, character_reference=root.character_reference, series_id=root.id, series_title=root.series_title or root.storyboard.title, episode_number=next_number, series_references=list(root.series_references), series_text_references=list(root.series_text_references))
     child = _sync_episode_from_root(child, root)
     project_store.save(child)
     return {"project": child, "series": await get_series(root.id)}
@@ -251,32 +253,12 @@ async def add_series_reference(project_id: str, payload: AddReferencePayload):
     root = _series_root(project)
     if payload.to_episode is not None and payload.to_episode < payload.from_episode:
         raise HTTPException(status_code=400, detail="to_episode must be >= from_episode")
-
     path = project_store.media_file(root.id, Path(payload.filename).name)
     if path is None or path.suffix.lower() not in _IMAGE_EXTS:
         raise HTTPException(status_code=404, detail="Reference image must exist in the series root Media Manager")
-
     url = f"/api/projects/{root.id}/media/{path.name}"
-    asset = MediaAsset(
-        provider="series_reference",
-        asset_id=path.name,
-        media_type="image",
-        preview_url=url,
-        source_url=f"series://{root.id}/{path.name}",
-        download_url=url,
-        author="series continuity",
-        label=f"Series Reference · {payload.name}",
-        local_path=f"media/{path.name}",
-    )
-    reference = SeriesReference(
-        id=uuid4().hex[:10],
-        name=payload.name,
-        description=payload.description,
-        kind=payload.kind,
-        asset=asset,
-        from_episode=payload.from_episode,
-        to_episode=payload.to_episode,
-    )
+    asset = MediaAsset(provider="series_reference", asset_id=path.name, media_type="image", preview_url=url, source_url=f"series://{root.id}/{path.name}", download_url=url, author="series continuity", label=f"Series Reference · {payload.name}", local_path=f"media/{path.name}")
+    reference = SeriesReference(id=uuid4().hex[:10], name=payload.name, description=payload.description, kind=payload.kind, asset=asset, from_episode=payload.from_episode, to_episode=payload.to_episode)
     root.series_references = [*root.series_references, reference]
     project_store.save(root)
     await sync_series_references(root.id)
@@ -293,6 +275,40 @@ async def delete_series_reference(project_id: str, reference_id: str):
     if len(refs) == len(root.series_references):
         raise HTTPException(status_code=404, detail="Series reference not found")
     root.series_references = refs
+    project_store.save(root)
+    await sync_series_references(root.id)
+    return {"deleted": True, "series": await get_series(root.id)}
+
+
+@router.post("/{project_id}/text-references")
+async def add_series_text_reference(project_id: str, payload: AddTextReferencePayload):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    root = _series_root(project)
+    if payload.to_episode is not None and payload.to_episode < payload.from_episode:
+        raise HTTPException(status_code=400, detail="to_episode must be >= from_episode")
+    if any(ref.key.lower() == payload.key.lower() for ref in root.series_text_references):
+        raise HTTPException(status_code=409, detail=f"Text reference @{payload.key} already exists")
+    if not payload.text_ru.strip() and not payload.text_en.strip():
+        raise HTTPException(status_code=400, detail="At least one of text_ru/text_en is required")
+    reference = SeriesTextReference(id=uuid4().hex[:10], key=payload.key, name=payload.name, kind=payload.kind, text_ru=payload.text_ru.strip(), text_en=payload.text_en.strip(), is_block=payload.is_block, from_episode=payload.from_episode, to_episode=payload.to_episode)
+    root.series_text_references = [*root.series_text_references, reference]
+    project_store.save(root)
+    await sync_series_references(root.id)
+    return {"reference": reference, "series": await get_series(root.id)}
+
+
+@router.delete("/{project_id}/text-references/{reference_id}")
+async def delete_series_text_reference(project_id: str, reference_id: str):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    root = _series_root(project)
+    refs = [ref for ref in root.series_text_references if ref.id != reference_id]
+    if len(refs) == len(root.series_text_references):
+        raise HTTPException(status_code=404, detail="Series text reference not found")
+    root.series_text_references = refs
     project_store.save(root)
     await sync_series_references(root.id)
     return {"deleted": True, "series": await get_series(root.id)}
