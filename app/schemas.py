@@ -54,6 +54,25 @@ class SeriesReference(BaseModel):
     to_episode: int | None = Field(default=None, ge=1)
 
 
+class SeriesTextReference(BaseModel):
+    """Reusable textual canon entry or composite visual alias.
+
+    Keys are referenced from scene visual prompts as ``@char_tim`` or
+    ``@visual_tim_boat``. ``text_ru`` / ``text_en`` may themselves contain other
+    @keys, which are expanded recursively immediately before image generation.
+    """
+
+    id: str
+    key: str = Field(pattern=r"^[a-zA-Z][a-zA-Z0-9_-]{1,63}$")
+    name: str = Field(min_length=1, max_length=200)
+    kind: ReferenceKind = "character"
+    text_ru: str = Field(default="", max_length=6000)
+    text_en: str = Field(default="", max_length=6000)
+    is_block: bool = False
+    from_episode: int = Field(default=1, ge=1)
+    to_episode: int | None = Field(default=None, ge=1)
+
+
 class AudioAsset(BaseModel):
     provider: str
     asset_id: str
@@ -123,3 +142,4 @@ class Project(BaseModel):
     series_title: str = ""
     episode_number: int | None = None
     series_references: list[SeriesReference] = Field(default_factory=list)
+    series_text_references: list[SeriesTextReference] = Field(default_factory=list)
