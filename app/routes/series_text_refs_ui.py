@@ -52,7 +52,6 @@ async def videogen_series_text_refs_js():
     if (!force && signature === lastSignature && document.querySelector('.videogen-text-refs-panel')) return;
     lastSignature = signature;
 
-    // Keep the AI proposal editor alive when the accepted-reference list refreshes.
     const oldPanel = document.querySelector('.videogen-text-refs-panel');
     const canonBuilder = oldPanel?.querySelector('.series-text-ai');
     if (canonBuilder) canonBuilder.remove();
@@ -62,7 +61,10 @@ async def videogen_series_text_refs_js():
     panel.className = 'videogen-text-refs-panel';
     panel.style.cssText = 'margin:14px 0;padding:15px;border:1px solid #38506b;border-radius:13px;background:#0c1219;';
     panel.innerHTML = `
-      <div><b style="font-size:17px">Text References / Visual Aliases</b><div class="muted" style="margin-top:3px">Это visual canon, а не текст сцены. После привязки сцена хранит ключи отдельно и показывает их badges; image pipeline разворачивает ключи в полный EN prompt автоматически.</div></div>
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap">
+        <div><b style="font-size:17px">Text References / Visual Aliases</b><div class="muted" style="margin-top:3px">Это visual canon, а не текст сцены. После привязки сцена хранит ключи отдельно и показывает их badges; image pipeline разворачивает ключи в полный EN prompt автоматически.</div></div>
+        <button type="button" class="tr-assign-scenes" ${refs.length ? '' : 'disabled'}>Привязать canon к сценам</button>
+      </div>
       <div class="text-ref-list" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:8px;margin-top:11px">${refs.map(refCard).join('') || '<div class="muted">Пока нет утверждённых Text References.</div>'}</div>
       <details style="margin-top:12px"><summary>Добавить ключ / готовый блок вручную</summary>
         <div style="display:grid;grid-template-columns:1fr 1.3fr .8fr .6fr;gap:7px;align-items:end;margin-top:9px">
@@ -84,6 +86,22 @@ async def videogen_series_text_refs_js():
     if (canonBuilder) panel.appendChild(canonBuilder);
 
     const state = panel.querySelector('.tr-state');
+    const assign = panel.querySelector('.tr-assign-scenes');
+    if (assign) assign.onclick = async () => {
+      if (!refs.length) return;
+      assign.disabled = true;
+      state.textContent = 'Qwen сопоставляет утверждённый canon со сценами...';
+      try {
+        const data = await jsonFetch(`/api/series/${encodeURIComponent(id)}/text-references/assign-scenes`, {method:'POST'});
+        state.textContent = `Готово: keys назначены ${data.assigned_scenes}/${data.total_scenes} сцен. Обновляю badges...`;
+        window.dispatchEvent(new CustomEvent('videogen:scene-references-updated'));
+        setTimeout(() => location.reload(), 350);
+      } catch (e) {
+        state.textContent = `Ошибка привязки: ${e.message}`;
+        assign.disabled = false;
+      }
+    };
+
     panel.querySelectorAll('.copy-ref').forEach(btn => btn.onclick = async () => {
       const value = '@' + btn.dataset.key;
       try { await navigator.clipboard.writeText(value); state.textContent = `${value} скопирован.`; } catch (_) { state.textContent = value; }
@@ -125,7 +143,6 @@ async def videogen_series_text_refs_js():
   });
   observer.observe(root,{childList:true,subtree:true});
   render();
-  // Slow refresh only to reflect accepted/deleted canon from other UI actions; no hot polling.
   setInterval(() => render(), 5000);
 })();
 '''
