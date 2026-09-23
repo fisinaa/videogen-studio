@@ -93,6 +93,27 @@ def _scene_dump(project: Project, limit: int = 40) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
+def _assignment_scene_dump(scenes) -> str:
+    """Compact dump used for canon assignment so a 4k llama context is never flooded."""
+    blocks: list[str] = []
+    for scene in scenes:
+        dialogue = " / ".join(scene.dialogue[:4])
+        blocks.append(
+            "\n".join(
+                [
+                    f"SCENE_ID: {scene.id}",
+                    f"TITLE: {scene.title[:220]}",
+                    f"ACTION: {scene.action[:700]}",
+                    f"NARRATION: {scene.narration[:500]}",
+                    f"DIALOGUE: {dialogue[:400]}",
+                    f"VISUAL_RU: {scene.visual_prompt_ru[:900]}",
+                    f"VISUAL_EN: {(scene.visual_prompt_en or scene.visual_prompt)[:900]}",
+                ]
+            )
+        )
+    return "\n\n---\n\n".join(blocks)
+
+
 def _parse(content: str, existing: set[str]) -> list[dict]:
     result: list[dict] = []
     seen = {key.lower() for key in existing}
@@ -149,9 +170,8 @@ def _parse(content: str, existing: set[str]) -> list[dict]:
     return result
 
 
-def _parse_assignments(content: str, project: Project, allowed: set[str]) -> dict[str, list[str]]:
-    scene_ids = {scene.id for scene in project.storyboard.scenes}
-    result: dict[str, list[str]] = {scene.id: [] for scene in project.storyboard.scenes}
+def _parse_assignments(content: str, scene_ids: set[str], allowed: set[str]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {scene_id: [] for scene_id in scene_ids}
     for raw in content.splitlines():
         line = raw.strip().strip("` ")
         if not line.upper().startswith("SCENE:"):
@@ -227,37 +247,51 @@ async def assign_text_references_to_scenes(project_id: str):
     if not refs:
         raise HTTPException(status_code=400, detail="No accepted Text References are available for this episode")
 
-    available_lines = []
-    allowed = set()
+    available_lines: list[str] = []
+    allowed: set[str] = set()
     for ref in refs:
         allowed.add(ref.key.lower())
         kind = "BLOCK" if ref.is_block else ref.kind.upper()
+        # Assignment needs identity, not the entire prose bible. Keep this compact for 4k contexts.
         available_lines.append(
-            f"@{ref.key} [{kind}] {ref.name}: {(ref.text_ru or ref.text_en)[:1600]}"
+            f"@{ref.key} [{kind}] {ref.name}: {(ref.text_ru or ref.text_en)[:350]}"
         )
-    prompt = (
-        "AVAILABLE REFERENCES:\n"
-        + "\n".join(available_lines)
-        + "\n\nREVIEWED SCENES:\n"
-        + _scene_dump(project)
-        + "\n\nAssign the approved keys to every scene. Keep the scene text unchanged."
-    )
+    available_text = "\n".join(available_lines)
 
     profile = settings.llm_profile_storyboard or "quality"
+    assignments: dict[str, list[str]] = {}
+    scenes = list(project.storyboard.scenes)
+    batch_size = 2
+    calls = 0
+
     try:
         with model_orchestrator.use_llm_profile(profile):
-            content = await llm._chat(
-                messages=[
-                    {"role": "system", "content": ASSIGN_SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=max(900, min(2200, 80 * len(project.storyboard.scenes))),
-                temperature=0.1,
-            )
+            for start in range(0, len(scenes), batch_size):
+                batch = scenes[start:start + batch_size]
+                scene_ids = {scene.id for scene in batch}
+                prompt = (
+                    "AVAILABLE REFERENCES:\n"
+                    + available_text
+                    + "\n\nREVIEWED SCENES:\n"
+                    + _assignment_scene_dump(batch)
+                    + "\n\nAssign the approved keys to every supplied scene. Keep the scene text unchanged."
+                )
+                content = await llm._chat(
+                    messages=[
+                        {"role": "system", "content": ASSIGN_SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_tokens=320,
+                    temperature=0.1,
+                )
+                assignments.update(_parse_assignments(content, scene_ids, allowed))
+                calls += 1
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Scene reference assignment failed: {exc}") from exc
+        raise HTTPException(
+            status_code=502,
+            detail=f"Scene reference assignment failed in batch {calls + 1}: {exc}",
+        ) from exc
 
-    assignments = _parse_assignments(content, project, allowed)
     assigned_count = 0
     for index, scene in enumerate(project.storyboard.scenes):
         keys = assignments.get(scene.id, [])
@@ -270,4 +304,6 @@ async def assign_text_references_to_scenes(project_id: str):
         "profile": model_orchestrator.normalize_profile(profile),
         "assigned_scenes": assigned_count,
         "total_scenes": len(project.storyboard.scenes),
+        "calls": calls,
+        "batch_size": batch_size,
     }
