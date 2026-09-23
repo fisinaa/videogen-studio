@@ -54,12 +54,7 @@ def _active_text_references(project: Project):
 
 
 def expand_visual_aliases(project: Project, text: str, language: str = "en") -> str:
-    """Expand @keys recursively using active series text references.
-
-    Composite blocks can contain other keys, e.g. ``@visual_tim_boat`` ->
-    ``@char_tim, @prop_boat, @style_cartoon``. Unknown keys are intentionally
-    left untouched so typos remain visible in the UI instead of silently vanishing.
-    """
+    """Expand @keys recursively using active series text references."""
     refs = {ref.key.lower(): ref for ref in _active_text_references(project)}
     if not refs or "@" not in text:
         return text
@@ -80,6 +75,33 @@ def expand_visual_aliases(project: Project, text: str, language: str = "en") -> 
         return _ALIAS_RE.sub(replace, value)
 
     return expand_value(text, ())
+
+
+def scene_reference_context(project: Project, scene, language: str = "en") -> str:
+    """Build canonical text context from a scene's separately stored reference keys."""
+    keys = [str(key).strip().lstrip("@").lower() for key in getattr(scene, "reference_keys", []) if str(key).strip()]
+    if not keys:
+        return ""
+    active = {ref.key.lower(): ref for ref in _active_text_references(project)}
+    lines: list[str] = []
+    seen: set[str] = set()
+    for key in keys:
+        if key in seen:
+            continue
+        seen.add(key)
+        ref = active.get(key)
+        if ref is None:
+            continue
+        preferred = ref.text_en if language == "en" else ref.text_ru
+        fallback = ref.text_ru if language == "en" else ref.text_en
+        raw = (preferred or fallback).strip()
+        if not raw:
+            continue
+        expanded = expand_visual_aliases(project, raw, language=language)
+        lines.append(f"@{ref.key} ({ref.name}): {expanded}")
+    if not lines:
+        return ""
+    return "SCENE CANONICAL REFERENCES. Apply these exact recurring designs without rewriting the human scene text:\n" + "\n".join(f"- {line}" for line in lines)
 
 
 def install_series_continuity() -> None:
@@ -114,7 +136,11 @@ def install_series_continuity() -> None:
         refs = _active_references(project)
         effective_reference = use_reference or bool(root and (root.character_reference or refs))
         prompt, reference_path = original_image_prompt(project, scene, effective_reference)
+        # Backward compatibility: explicit @aliases already present in old prompts still work.
         prompt = expand_visual_aliases(project, prompt, language="en")
+        text_context = scene_reference_context(project, scene, language="en")
+        if text_context:
+            prompt = prompt.rstrip() + "\n\n" + text_context
         if refs:
             lines = [
                 "SERIES CONTINUITY REFERENCES. Keep these recurring designs stable and do not redesign them:",
