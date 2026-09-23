@@ -12,6 +12,7 @@ async def videogen_scene_collapse_js():
     script = r'''
 (() => {
   const sceneSelector = '.scene-editor[data-scene-id]';
+  let enhanceScheduled = false;
 
   function projectId() {
     return new URL(location.href).searchParams.get('project') ||
@@ -30,7 +31,7 @@ async def videogen_scene_collapse_js():
   function durationFor(scene) {
     const input = scene.querySelector('.f-duration');
     const value = Number(input?.value || 0);
-    return Number.isFinite(value) && value > 0 ? `${value:g}s`.replace(':g', '') : '';
+    return Number.isFinite(value) && value > 0 ? `${value}s` : '';
   }
 
   function updateSummary(scene) {
@@ -38,26 +39,37 @@ async def videogen_scene_collapse_js():
     if (!summary) return;
     const title = titleFor(scene);
     const duration = durationFor(scene);
-    summary.textContent = [title, duration].filter(Boolean).join(' · ');
+    const next = [title, duration].filter(Boolean).join(' · ');
+    if (summary.textContent !== next) summary.textContent = next;
   }
 
   function setCollapsed(scene, collapsed, persist=true) {
     const head = scene.querySelector('.scene-head');
     if (!head) return;
-    scene.dataset.collapsed = collapsed ? '1' : '0';
+    const value = collapsed ? '1' : '0';
+    if (scene.dataset.collapsed !== value) scene.dataset.collapsed = value;
+
     [...scene.children].forEach(child => {
-      if (child !== head) child.style.display = collapsed ? 'none' : '';
+      if (child === head) return;
+      const nextDisplay = collapsed ? 'none' : '';
+      if (child.style.display !== nextDisplay) child.style.display = nextDisplay;
     });
+
     const button = scene.querySelector('.scene-collapse-toggle');
     if (button) {
-      button.textContent = collapsed ? '▸ Развернуть' : '▾ Свернуть';
-      button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      const nextText = collapsed ? '▸ Развернуть' : '▾ Свернуть';
+      if (button.textContent !== nextText) button.textContent = nextText;
+      const expanded = collapsed ? 'false' : 'true';
+      if (button.getAttribute('aria-expanded') !== expanded) button.setAttribute('aria-expanded', expanded);
       button.title = collapsed ? 'Развернуть сцену' : 'Свернуть сцену';
     }
-    scene.style.paddingBottom = collapsed ? '10px' : '';
+
+    const nextPadding = collapsed ? '10px' : '';
+    if (scene.style.paddingBottom !== nextPadding) scene.style.paddingBottom = nextPadding;
     updateSummary(scene);
+
     if (persist) {
-      try { sessionStorage.setItem(storageKey(scene), collapsed ? '1' : '0'); } catch (_) {}
+      try { sessionStorage.setItem(storageKey(scene), value); } catch (_) {}
     }
   }
 
@@ -66,6 +78,7 @@ async def videogen_scene_collapse_js():
       updateSummary(scene);
       return;
     }
+
     const head = scene.querySelector('.scene-head');
     if (!head) return;
     scene.dataset.collapseUi = '1';
@@ -126,11 +139,31 @@ async def videogen_scene_collapse_js():
     ensureBulkControls();
   }
 
-  const observer = new MutationObserver(enhance);
-  observer.observe(document.documentElement, {childList:true, subtree:true});
+  function scheduleEnhance() {
+    if (enhanceScheduled) return;
+    enhanceScheduled = true;
+    requestAnimationFrame(() => {
+      enhanceScheduled = false;
+      enhance();
+    });
+  }
+
+  function mutationNeedsEnhance(records) {
+    for (const record of records) {
+      for (const node of record.addedNodes) {
+        if (!(node instanceof Element)) continue;
+        if (node.matches?.(sceneSelector) || node.querySelector?.(sceneSelector)) return true;
+        if (node.matches?.('.project-actions') || node.querySelector?.('.project-actions')) return true;
+      }
+    }
+    return false;
+  }
+
+  const observer = new MutationObserver(records => {
+    if (mutationNeedsEnhance(records)) scheduleEnhance();
+  });
+  observer.observe(document.getElementById('result') || document.body, {childList:true, subtree:true});
   enhance();
 })();
 '''
-    # Fix JavaScript formatting placeholder introduced above without involving the browser.
-    script = script.replace("`${value:g}s`.replace(':g', '')", "`${value}s`")
     return Response(script, media_type="application/javascript", headers={"Cache-Control": "no-store"})
