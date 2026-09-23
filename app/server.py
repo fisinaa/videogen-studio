@@ -10,6 +10,7 @@ from app.services.series_continuity import install_series_continuity
 install_series_continuity()
 install_llm_quality()
 
+from app.routes.canon_edit_ui import router as canon_edit_ui_router
 from app.routes.media_files import router as media_files_router
 from app.routes.media_library import router as media_library_router
 from app.routes.motion import router as motion_router
@@ -44,6 +45,7 @@ app.include_router(scene_collapse_ui_router)
 app.include_router(series_ui_router)
 app.include_router(series_text_refs_ui_router)
 app.include_router(workflow_ui_router)
+app.include_router(canon_edit_ui_router)
 app.include_router(motion_progress_ui_router)
 app.include_router(pipeline_progress_ui_router)
 
@@ -69,6 +71,7 @@ async def inject_videogen_ui_tools(request, call_next):
         '<script src="/videogen-series.js"></script>',
         '<script src="/videogen-series-text-refs.js"></script>',
         '<script src="/videogen-workflow.js"></script>',
+        '<script src="/videogen-canon-edit.js"></script>',
         '<script src="/videogen-motion-progress.js"></script>',
         '<script src="/videogen-pipeline-progress.js"></script>',
     ]
