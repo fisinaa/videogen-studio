@@ -20,6 +20,7 @@ from app.routes.pipeline_progress_ui import router as pipeline_progress_ui_route
 from app.routes.production import router as production_router
 from app.routes.project_prompt_ui import router as project_prompt_ui_router
 from app.routes.project_tools_ui import router as project_tools_ui_router
+from app.routes.scene_collapse_ui import router as scene_collapse_ui_router
 from app.routes.series import router as series_router
 from app.routes.series_text_ai import router as series_text_ai_router
 from app.routes.series_text_refs_ui import router as series_text_refs_ui_router
@@ -39,6 +40,7 @@ app.include_router(series_text_ai_router)
 app.include_router(project_prompt_ui_router)
 app.include_router(ui_tools_router)
 app.include_router(project_tools_ui_router)
+app.include_router(scene_collapse_ui_router)
 app.include_router(series_ui_router)
 app.include_router(series_text_refs_ui_router)
 app.include_router(workflow_ui_router)
@@ -63,6 +65,7 @@ async def inject_videogen_ui_tools(request, call_next):
         '<script src="/videogen-enhancements.js"></script>',
         '<script src="/videogen-project-tools.js"></script>',
         '<script src="/videogen-project-prompt.js"></script>',
+        '<script src="/videogen-scene-collapse.js"></script>',
         '<script src="/videogen-series.js"></script>',
         '<script src="/videogen-series-text-refs.js"></script>',
         '<script src="/videogen-workflow.js"></script>',
