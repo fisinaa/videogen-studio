@@ -35,17 +35,20 @@ Rules:
 - Usually return 3-10 REF lines and 0-4 BLOCK lines.
 """
 
-ASSIGN_SYSTEM_PROMPT = """You assign approved visual canon keys to storyboard scenes.
-Do NOT return JSON. Do NOT use markdown. Do NOT rewrite scene prose.
-Return one line for every supplied scene in this exact format:
-SCENE: scene-id | @key1, @key2
+ASSIGN_SYSTEM_PROMPT = """Assign approved visual reference keys to storyboard scenes.
+Return ONLY one short line per supplied scene. No JSON, markdown, explanation or reasoning.
+Copy each supplied SCENE_ID exactly.
+
+Exact format:
+SCENE: scene-001 | @char_tim, @loc_river
+SCENE: scene-002 | @prop_boat
 
 Rules:
-- Use ONLY keys from AVAILABLE REFERENCES.
-- Assign a key only when that entity/style/block is visibly relevant to the scene.
-- Prefer a composite @visual_ block when it accurately represents the scene; do not also repeat all of its component keys unless needed for another reason.
+- Use ONLY keys listed in AVAILABLE REFERENCES.
+- Assign keys only when visually relevant to that scene.
+- Prefer an accurate @visual_ composite block instead of repeating all of its components.
 - Do not invent keys.
-- A scene may have no references: SCENE: scene-id |
+- If nothing applies, still return the scene line with an empty right side.
 """
 
 
@@ -94,20 +97,17 @@ def _scene_dump(project: Project, limit: int = 40) -> str:
 
 
 def _assignment_scene_dump(scenes) -> str:
-    """Compact dump used for canon assignment so a 4k llama context is never flooded."""
+    """Small assignment-only representation that comfortably fits a 4k context."""
     blocks: list[str] = []
     for scene in scenes:
-        dialogue = " / ".join(scene.dialogue[:4])
         blocks.append(
             "\n".join(
                 [
                     f"SCENE_ID: {scene.id}",
-                    f"TITLE: {scene.title[:220]}",
-                    f"ACTION: {scene.action[:700]}",
-                    f"NARRATION: {scene.narration[:500]}",
-                    f"DIALOGUE: {dialogue[:400]}",
-                    f"VISUAL_RU: {scene.visual_prompt_ru[:900]}",
-                    f"VISUAL_EN: {(scene.visual_prompt_en or scene.visual_prompt)[:900]}",
+                    f"TITLE: {scene.title[:180]}",
+                    f"ACTION: {scene.action[:420]}",
+                    f"VISUAL_RU: {scene.visual_prompt_ru[:560]}",
+                    f"VISUAL_EN: {(scene.visual_prompt_en or scene.visual_prompt)[:560]}",
                 ]
             )
         )
@@ -171,23 +171,33 @@ def _parse(content: str, existing: set[str]) -> list[dict]:
 
 
 def _parse_assignments(content: str, scene_ids: set[str], allowed: set[str]) -> dict[str, list[str]]:
+    """Parse Qwen output tolerantly.
+
+    Local models sometimes omit `SCENE:`, change separators, remove the @ sign,
+    or put KEYS on the following line. We anchor on the exact known scene ids and
+    then scan that scene's output segment for known keys only.
+    """
     result: dict[str, list[str]] = {scene_id: [] for scene_id in scene_ids}
-    for raw in content.splitlines():
-        line = raw.strip().strip("` ")
-        if not line.upper().startswith("SCENE:"):
-            continue
-        payload = line.split(":", 1)[1]
-        if "|" not in payload:
-            continue
-        scene_id, raw_keys = [part.strip() for part in payload.split("|", 1)]
-        if scene_id not in scene_ids:
-            continue
-        keys: list[str] = []
-        for token in re.findall(r"@[A-Za-z][A-Za-z0-9_-]{1,63}", raw_keys):
-            key = _clean_key(token)
-            if key in allowed and key not in keys:
-                keys.append(key)
-        result[scene_id] = keys
+    if not content.strip():
+        return result
+
+    positions: list[tuple[int, str]] = []
+    for scene_id in scene_ids:
+        match = re.search(re.escape(scene_id), content, flags=re.IGNORECASE)
+        if match:
+            positions.append((match.start(), scene_id))
+    positions.sort()
+
+    for index, (start, scene_id) in enumerate(positions):
+        end = positions[index + 1][0] if index + 1 < len(positions) else len(content)
+        segment = content[start:end]
+        found: list[str] = []
+        for key in sorted(allowed, key=len, reverse=True):
+            pattern = rf"(?<![A-Za-z0-9_-])@?{re.escape(key)}(?![A-Za-z0-9_-])"
+            if re.search(pattern, segment, flags=re.IGNORECASE) and key not in found:
+                found.append(key)
+        result[scene_id] = found
+
     return result
 
 
@@ -252,39 +262,43 @@ async def assign_text_references_to_scenes(project_id: str):
     for ref in refs:
         allowed.add(ref.key.lower())
         kind = "BLOCK" if ref.is_block else ref.kind.upper()
-        # Assignment needs identity, not the entire prose bible. Keep this compact for 4k contexts.
         available_lines.append(
-            f"@{ref.key} [{kind}] {ref.name}: {(ref.text_ru or ref.text_en)[:350]}"
+            f"@{ref.key} [{kind}] {ref.name}: {(ref.text_ru or ref.text_en)[:240]}"
         )
     available_text = "\n".join(available_lines)
 
     profile = settings.llm_profile_storyboard or "quality"
     assignments: dict[str, list[str]] = {}
     scenes = list(project.storyboard.scenes)
-    batch_size = 2
+    batch_size = 6
     calls = 0
+    previews: list[str] = []
 
     try:
         with model_orchestrator.use_llm_profile(profile):
             for start in range(0, len(scenes), batch_size):
                 batch = scenes[start:start + batch_size]
                 scene_ids = {scene.id for scene in batch}
+                expected = "\n".join(f"SCENE: {scene.id} |" for scene in batch)
                 prompt = (
                     "AVAILABLE REFERENCES:\n"
                     + available_text
-                    + "\n\nREVIEWED SCENES:\n"
+                    + "\n\nSCENES:\n"
                     + _assignment_scene_dump(batch)
-                    + "\n\nAssign the approved keys to every supplied scene. Keep the scene text unchanged."
+                    + "\n\nReturn exactly these scene ids, one line each, adding only applicable keys after |:\n"
+                    + expected
                 )
                 content = await llm._chat(
                     messages=[
                         {"role": "system", "content": ASSIGN_SYSTEM_PROMPT},
                         {"role": "user", "content": prompt},
                     ],
-                    max_tokens=320,
-                    temperature=0.1,
+                    max_tokens=260,
+                    temperature=0.0,
                 )
-                assignments.update(_parse_assignments(content, scene_ids, allowed))
+                parsed = _parse_assignments(content, scene_ids, allowed)
+                assignments.update(parsed)
+                previews.append(" ".join(content.strip().split())[:500])
                 calls += 1
     except Exception as exc:
         raise HTTPException(
@@ -292,11 +306,19 @@ async def assign_text_references_to_scenes(project_id: str):
             detail=f"Scene reference assignment failed in batch {calls + 1}: {exc}",
         ) from exc
 
-    assigned_count = 0
+    assigned_count = sum(1 for keys in assignments.values() if keys)
+    if assigned_count == 0:
+        preview = previews[0] if previews else "EMPTY RESPONSE"
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Qwen completed assignment but no usable keys were parsed. "
+                f"First response: {preview}"
+            ),
+        )
+
     for index, scene in enumerate(project.storyboard.scenes):
         keys = assignments.get(scene.id, [])
-        if keys:
-            assigned_count += 1
         project.storyboard.scenes[index] = scene.model_copy(update={"reference_keys": keys})
     project_store.save(project)
     return {
