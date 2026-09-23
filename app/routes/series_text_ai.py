@@ -281,6 +281,7 @@ async def assign_text_references_to_scenes(project_id: str):
                 scene_ids = {scene.id for scene in batch}
                 expected = "\n".join(f"SCENE: {scene.id} |" for scene in batch)
                 prompt = (
+                    "/no_think\n\n"
                     "AVAILABLE REFERENCES:\n"
                     + available_text
                     + "\n\nSCENES:\n"
@@ -293,7 +294,7 @@ async def assign_text_references_to_scenes(project_id: str):
                         {"role": "system", "content": ASSIGN_SYSTEM_PROMPT},
                         {"role": "user", "content": prompt},
                     ],
-                    max_tokens=260,
+                    max_tokens=520,
                     temperature=0.0,
                 )
                 parsed = _parse_assignments(content, scene_ids, allowed)
@@ -313,7 +314,7 @@ async def assign_text_references_to_scenes(project_id: str):
             status_code=502,
             detail=(
                 "Qwen completed assignment but no usable keys were parsed. "
-                f"First response: {preview}"
+                f"First response: {preview or 'EMPTY RESPONSE'}"
             ),
         )
 
