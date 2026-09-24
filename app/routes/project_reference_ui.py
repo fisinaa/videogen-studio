@@ -10,6 +10,26 @@ async def videogen_project_reference_js():
     script = r'''
 (() => {
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  let activeHasReference = false;
+
+  // Existing UI historically enabled Character Reference automatically only for
+  // OpenAI. Keep the normal UI untouched, but when a project has an uploaded
+  // reference make sure OpenAI and Local Next receive it for single and batch
+  // image generation. Local Fast/Quality remain opt-in through the checkbox.
+  const previousFetch = window.fetch.bind(window);
+  window.fetch = function(input, init) {
+    if (activeHasReference && typeof input === 'string' && input.includes('/media/generate-')) {
+      try {
+        const url = new URL(input, location.origin);
+        const provider = url.searchParams.get('provider');
+        if (provider === 'openai' || provider === 'local_next') {
+          url.searchParams.set('use_reference', 'true');
+          input = url.pathname + url.search + url.hash;
+        }
+      } catch (_) {}
+    }
+    return previousFetch(input, init);
+  };
 
   function projectId() {
     return new URL(location.href).searchParams.get('project') || document.querySelector('.recent-project.active')?.dataset?.projectId || '';
@@ -61,7 +81,7 @@ async def videogen_project_reference_js():
         </div>
         <div style="margin-top:8px;padding:14px;border:1px solid #3a4a62;border-radius:12px;background:#0c131d">
           <b>Character Reference — опционально</b>
-          <div class="muted" style="margin:5px 0 10px">Можно сразу приложить фото/арт персонажа. Оно будет сохранено в проект и доступно OpenAI Image и локальным image-моделям.</div>
+          <div class="muted" style="margin:5px 0 10px">Можно сразу приложить фото/арт персонажа. Для OpenAI Image и Local Next reference будет включаться автоматически.</div>
           <div class="two">
             <label>Имя персонажа<input id="vg-character-name" maxlength="200" placeholder="Лея"></label>
             <label>Фото / арт<input id="vg-reference" type="file" accept="image/jpeg,image/png,image/webp"></label>
@@ -133,6 +153,16 @@ async def videogen_project_reference_js():
       if (response.ok) project = await response.json();
     } catch (_) {}
 
+    activeHasReference = !!project?.character_reference;
+
+    if (project?.name) {
+      const title = document.querySelector('#result > h3');
+      if (title && !title.dataset.projectNameApplied) {
+        title.dataset.projectNameApplied = '1';
+        title.textContent = `${project.name} — ${title.textContent}`;
+      }
+    }
+
     const controls = document.createElement('div');
     controls.style.cssText = 'margin-top:12px;padding-top:12px;border-top:1px solid #2d4059;';
     controls.innerHTML = `
@@ -142,6 +172,7 @@ async def videogen_project_reference_js():
       </div>
       <label>Инструкция к reference<textarea class="vg-ref-prompt" style="min-height:76px">${esc(project?.character_reference_prompt || '')}</textarea></label>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="vg-ref-upload">Загрузить фото</button>${project?.character_reference ? '<button type="button" class="danger vg-ref-delete">Удалить reference</button>' : ''}</div>
+      ${project?.character_reference ? '<div class="muted" style="margin-top:7px">Reference автоматически передаётся в OpenAI Image и Local Next. Для Local Fast/Quality можно управлять чекбоксом сцены вручную.</div>' : ''}
       <div class="vg-ref-state muted" style="margin-top:7px"></div>
     `;
     box.appendChild(controls);
