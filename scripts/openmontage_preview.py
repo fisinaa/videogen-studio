@@ -9,11 +9,18 @@ import sys
 from pathlib import Path
 
 
-HYPERFRAMES_NPX_PACKAGE = os.environ.get("VIDEOGEN_HYPERFRAMES_NPX_PACKAGE", "hyperframes@0.8.58")
+# Use the published HyperFrames package name. Pinning an old version here can
+# force an unnecessary cold download or leave the preview command incompatible
+# with the OpenMontage checkout on disk.
+HYPERFRAMES_NPX_PACKAGE = os.environ.get("VIDEOGEN_HYPERFRAMES_NPX_PACKAGE", "hyperframes")
 
 
 def _json(payload: dict) -> None:
-    print(json.dumps(payload, ensure_ascii=False))
+    print(json.dumps(payload, ensure_ascii=False), flush=True)
+
+
+def _log(message: str) -> None:
+    print(f"[videogen-openmontage] {message}", file=sys.stderr, flush=True)
 
 
 def _load_openmontage() -> Path:
@@ -42,7 +49,8 @@ def main() -> int:
     if len(sys.argv) < 2:
         raise RuntimeError("usage: openmontage_preview.py <job-json>")
 
-    _load_openmontage()
+    root = _load_openmontage()
+    _log(f"OpenMontage root: {root}")
     _patch_hyperframes_package()
     job = json.loads(sys.argv[1])
 
@@ -50,6 +58,7 @@ def main() -> int:
 
     workspace = Path(job["workspace_path"]).expanduser().resolve()
     workspace.mkdir(parents=True, exist_ok=True)
+    _log(f"Scaffolding HyperFrames workspace: {workspace}")
 
     result = HyperFramesCompose().execute({
         "operation": "scaffold_workspace",
@@ -63,20 +72,32 @@ def main() -> int:
         raise RuntimeError(result.error or "HyperFrames workspace scaffold failed")
 
     port = int(job.get("preview_port") or 3002)
+    _log(f"Workspace ready. Preview port: {port}")
     if not _port_open(port):
         npx = shutil.which("npx") or "npx"
         env = os.environ.copy()
-        # Browser opening is handled by VideoGen's client UI; keep the server process headless.
         env.setdefault("BROWSER", "none")
+        cmd = [
+            npx,
+            "--yes",
+            HYPERFRAMES_NPX_PACKAGE,
+            "preview",
+            "--port",
+            str(port),
+            "--force-new",
+        ]
+        _log("Starting: " + " ".join(cmd))
+        # stdout/stderr intentionally inherit from this helper. VideoGen redirects
+        # them into a per-project log so preview startup failures are visible.
         subprocess.Popen(
-            [npx, "--yes", HYPERFRAMES_NPX_PACKAGE, "preview", "--port", str(port)],
+            cmd,
             cwd=str(workspace),
             env=env,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
+    else:
+        _log(f"Preview port {port} is already open; reusing existing Studio")
 
     project_name = workspace.name
     _json({
