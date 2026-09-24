@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
@@ -13,6 +15,32 @@ router = APIRouter(prefix="/api/openmontage", tags=["openmontage"])
 @router.get("/status")
 async def openmontage_status():
     return await openmontage.status()
+
+
+@router.get("/logs/latest")
+async def latest_openmontage_preview_log(
+    tail: int = Query(default=12000, ge=500, le=100000),
+):
+    paths = sorted(
+        Path("/tmp").glob("videogen-openmontage-preview-*.log"),
+        key=lambda item: item.stat().st_mtime if item.exists() else 0,
+        reverse=True,
+    )
+    if not paths:
+        return {"found": False, "path": None, "content": ""}
+
+    path = paths[0]
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Cannot read OpenMontage log: {exc}") from exc
+
+    return {
+        "found": True,
+        "path": str(path),
+        "size": path.stat().st_size,
+        "content": content[-tail:],
+    }
 
 
 @router.post("/projects/{project_id}/studio")
