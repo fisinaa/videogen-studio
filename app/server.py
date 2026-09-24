@@ -34,6 +34,7 @@ from app.routes.series_text_ai import router as series_text_ai_router
 from app.routes.series_text_refs_collapse_ui import router as series_text_refs_collapse_ui_router
 from app.routes.series_text_refs_ui import router as series_text_refs_ui_router
 from app.routes.series_ui import router as series_ui_router
+from app.routes.stale_project_guard_ui import router as stale_project_guard_ui_router
 from app.routes.story_repair import router as story_repair_router
 from app.routes.story_repair_ui import router as story_repair_ui_router
 from app.routes.storyboard_openai import router as storyboard_openai_router
@@ -68,6 +69,7 @@ app.include_router(canon_edit_ui_router)
 app.include_router(story_repair_ui_router)
 app.include_router(motion_progress_ui_router)
 app.include_router(pipeline_progress_ui_router)
+app.include_router(stale_project_guard_ui_router)
 
 
 @app.middleware("http")
@@ -84,6 +86,7 @@ async def inject_videogen_ui_tools(request, call_next):
         body += chunk
     text = body.decode("utf-8", errors="replace")
     markers = [
+        '<script src="/videogen-stale-project-guard.js"></script>',
         '<script src="/videogen-enhancements.js"></script>',
         '<script src="/videogen-project-tools.js"></script>',
         '<script src="/videogen-project-prompt.js"></script>',
