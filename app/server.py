@@ -19,6 +19,7 @@ from app.routes.media_files import router as media_files_router
 from app.routes.media_library import router as media_library_router
 from app.routes.motion import router as motion_router
 from app.routes.motion_progress_ui import router as motion_progress_ui_router
+from app.routes.openai_image_errors_ui import router as openai_image_errors_ui_router
 from app.routes.openmontage import router as openmontage_router
 from app.routes.openmontage_popup_fix_ui import router as openmontage_popup_fix_ui_router
 from app.routes.pipeline import router as pipeline_router
@@ -70,6 +71,7 @@ app.include_router(story_repair_ui_router)
 app.include_router(motion_progress_ui_router)
 app.include_router(pipeline_progress_ui_router)
 app.include_router(stale_project_guard_ui_router)
+app.include_router(openai_image_errors_ui_router)
 
 
 @app.middleware("http")
@@ -102,6 +104,7 @@ async def inject_videogen_ui_tools(request, call_next):
         '<script src="/videogen-pipeline-progress.js"></script>',
         '<script src="/videogen-openmontage-popup-fix.js"></script>',
         '<script src="/videogen-project-reference.js"></script>',
+        '<script src="/videogen-openai-image-errors.js"></script>',
     ]
     injection = "\n".join(marker for marker in markers if marker not in text)
     if injection:
