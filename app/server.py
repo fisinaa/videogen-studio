@@ -2,6 +2,7 @@ from starlette.responses import Response
 
 from app.main import app
 from app.services.llm_quality import install_llm_quality
+from app.services.project_reference import install_project_reference_support
 from app.services.series_continuity import install_series_continuity
 from app.services.storyboard_quality import install_storyboard_quality
 
@@ -11,6 +12,7 @@ from app.services.storyboard_quality import install_storyboard_quality
 install_series_continuity()
 install_llm_quality()
 install_storyboard_quality()
+install_project_reference_support()
 
 from app.routes.canon_edit_ui import router as canon_edit_ui_router
 from app.routes.media_files import router as media_files_router
@@ -23,6 +25,8 @@ from app.routes.pipeline import router as pipeline_router
 from app.routes.pipeline_progress_ui import router as pipeline_progress_ui_router
 from app.routes.production import router as production_router
 from app.routes.project_prompt_ui import router as project_prompt_ui_router
+from app.routes.project_reference import router as project_reference_router
+from app.routes.project_reference_ui import router as project_reference_ui_router
 from app.routes.project_tools_ui import router as project_tools_ui_router
 from app.routes.scene_collapse_ui import router as scene_collapse_ui_router
 from app.routes.series import router as series_router
@@ -50,6 +54,8 @@ app.include_router(series_text_ai_router)
 app.include_router(story_repair_router)
 app.include_router(storyboard_openai_router)
 app.include_router(storyboard_provider_ui_router)
+app.include_router(project_reference_router)
+app.include_router(project_reference_ui_router)
 app.include_router(project_prompt_ui_router)
 app.include_router(ui_tools_router)
 app.include_router(project_tools_ui_router)
@@ -92,6 +98,7 @@ async def inject_videogen_ui_tools(request, call_next):
         '<script src="/videogen-motion-progress.js"></script>',
         '<script src="/videogen-pipeline-progress.js"></script>',
         '<script src="/videogen-openmontage-popup-fix.js"></script>',
+        '<script src="/videogen-project-reference.js"></script>',
     ]
     injection = "\n".join(marker for marker in markers if marker not in text)
     if injection:
