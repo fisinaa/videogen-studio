@@ -22,6 +22,7 @@ class LLMRunInfo(BaseModel):
 
 class CreateProjectRequest(BaseModel):
     prompt: str = Field(min_length=3, max_length=10000)
+    project_name: str = Field(default="", max_length=200)
     project_type: ProjectType = "cartoon"
     aspect_ratio: AspectRatio = "16:9"
     duration_seconds: int = Field(default=60, ge=10, le=7200)
@@ -141,7 +142,10 @@ class Project(BaseModel):
     id: str
     request: CreateProjectRequest
     storyboard: Storyboard
+    name: str = ""
     character_reference: MediaAsset | None = None
+    character_reference_name: str = ""
+    character_reference_prompt: str = ""
     series_id: str | None = None
     series_title: str = ""
     episode_number: int | None = None
