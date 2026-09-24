@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import json
 import mimetypes
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -9,6 +11,35 @@ import httpx
 
 from app.config import settings
 from app.schemas import MediaAsset
+
+
+OPENAI_IMAGE_LOG = Path("/tmp/videogen-openai-image.log")
+
+
+def _log(message: str) -> None:
+    try:
+        stamp = datetime.now(timezone.utc).isoformat()
+        with OPENAI_IMAGE_LOG.open("a", encoding="utf-8") as handle:
+            handle.write(f"[{stamp}] {message}\n")
+    except OSError:
+        pass
+
+
+def _safe_response_detail(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+        if isinstance(payload, dict):
+            error = payload.get("error")
+            if isinstance(error, dict):
+                message = str(error.get("message") or "").strip()
+                code = str(error.get("code") or "").strip()
+                param = str(error.get("param") or "").strip()
+                pieces = [piece for piece in [message, f"code={code}" if code else "", f"param={param}" if param else ""] if piece]
+                if pieces:
+                    return " | ".join(pieces)
+        return json.dumps(payload, ensure_ascii=False)[:2000]
+    except Exception:
+        return (response.text or "").strip()[:2000]
 
 
 class OpenAIImageProvider:
@@ -92,12 +123,11 @@ class OpenAIImageProvider:
                     )
                     for path in refs
                 ]
-                response = await client.post(
-                    endpoint,
-                    headers=headers,
-                    data=data_fields,
-                    files=files,
+                _log(
+                    f"scene={scene_id} mode=edit model={settings.openai_image_model} size={size} "
+                    f"quality={settings.openai_image_quality} refs={len(refs)} endpoint={endpoint}"
                 )
+                response = await client.post(endpoint, headers=headers, data=data_fields, files=files)
             else:
                 endpoint = settings.openai_base_url.rstrip("/") + "/images/generations"
                 payload = {
@@ -107,19 +137,36 @@ class OpenAIImageProvider:
                     "quality": settings.openai_image_quality,
                     "n": 1,
                 }
+                _log(
+                    f"scene={scene_id} mode=generation model={settings.openai_image_model} size={size} "
+                    f"quality={settings.openai_image_quality} endpoint={endpoint}"
+                )
                 response = await client.post(
                     endpoint,
                     headers={**headers, "Content-Type": "application/json"},
                     json=payload,
                 )
 
-            response.raise_for_status()
+            if response.is_error:
+                detail = _safe_response_detail(response)
+                request_id = response.headers.get("x-request-id", "")
+                _log(
+                    f"scene={scene_id} FAILED status={response.status_code} request_id={request_id} detail={detail}"
+                )
+                raise RuntimeError(
+                    f"OpenAI Image HTTP {response.status_code}: {detail}"
+                    + (f" [request_id={request_id}]" if request_id else "")
+                )
+
             data = response.json()
             image_bytes, source_url = self._decode_image_response(data)
 
             if image_bytes is None and source_url.startswith("http"):
                 image_response = await client.get(source_url)
-                image_response.raise_for_status()
+                if image_response.is_error:
+                    detail = _safe_response_detail(image_response)
+                    _log(f"scene={scene_id} image-download FAILED status={image_response.status_code} detail={detail}")
+                    image_response.raise_for_status()
                 image_bytes = image_response.content
 
             if not image_bytes:
@@ -129,6 +176,7 @@ class OpenAIImageProvider:
         filename = f"{scene_id}-openai-{uuid4().hex[:8]}.png"
         output_path = media_dir / filename
         output_path.write_bytes(image_bytes)
+        _log(f"scene={scene_id} OK file={output_path}")
 
         local_url = f"/api/projects/{project_id}/media/{filename}"
         mode = f"reference edit ({len(refs)} refs)" if refs else "generation"
