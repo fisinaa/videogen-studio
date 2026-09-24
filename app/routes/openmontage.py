@@ -52,8 +52,11 @@ async def open_project_studio(project_id: str, request: Request):
         payload = await openmontage.preview(project)
         port = int(payload.get("port") or 3002)
         studio_path = str(payload.get("studio_path") or "/")
-        host = request.url.hostname or "127.0.0.1"
-        payload["url"] = f"http://{host}:{port}{studio_path}"
+
+        # HyperFrames preview binds to localhost. Returning the VideoGen host here
+        # sends the browser to e.g. 192.168.x.x:<port>, where nothing is listening.
+        # Use the address HyperFrames actually exposes.
+        payload["url"] = f"http://127.0.0.1:{port}{studio_path}"
         return payload
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
