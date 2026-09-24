@@ -53,10 +53,12 @@ async def open_project_studio(project_id: str, request: Request):
         port = int(payload.get("port") or 3002)
         studio_path = str(payload.get("studio_path") or "/")
 
-        # HyperFrames preview binds to localhost. Returning the VideoGen host here
-        # sends the browser to e.g. 192.168.x.x:<port>, where nothing is listening.
-        # Use the address HyperFrames actually exposes.
-        payload["url"] = f"http://127.0.0.1:{port}{studio_path}"
+        # The preview helper exposes a LAN-facing TCP proxy on 0.0.0.0:<port>
+        # while HyperFrames itself remains bound to localhost on an internal port.
+        # Use the same hostname/IP the user used to open VideoGen, so a browser on
+        # another machine in the LAN gets e.g. http://192.168.0.47:3643/...
+        host = request.url.hostname or "127.0.0.1"
+        payload["url"] = f"http://{host}:{port}{studio_path}"
         return payload
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
