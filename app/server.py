@@ -31,6 +31,8 @@ from app.routes.series_text_refs_ui import router as series_text_refs_ui_router
 from app.routes.series_ui import router as series_ui_router
 from app.routes.story_repair import router as story_repair_router
 from app.routes.story_repair_ui import router as story_repair_ui_router
+from app.routes.storyboard_openai import router as storyboard_openai_router
+from app.routes.storyboard_provider_ui import router as storyboard_provider_ui_router
 from app.routes.ui_tools import router as ui_tools_router
 from app.routes.workflow_ui import router as workflow_ui_router
 
@@ -44,6 +46,8 @@ app.include_router(pipeline_router)
 app.include_router(series_router)
 app.include_router(series_text_ai_router)
 app.include_router(story_repair_router)
+app.include_router(storyboard_openai_router)
+app.include_router(storyboard_provider_ui_router)
 app.include_router(project_prompt_ui_router)
 app.include_router(ui_tools_router)
 app.include_router(project_tools_ui_router)
@@ -82,6 +86,7 @@ async def inject_videogen_ui_tools(request, call_next):
         '<script src="/videogen-workflow.js"></script>',
         '<script src="/videogen-canon-edit.js"></script>',
         '<script src="/videogen-story-repair.js"></script>',
+        '<script src="/videogen-storyboard-provider.js"></script>',
         '<script src="/videogen-motion-progress.js"></script>',
         '<script src="/videogen-pipeline-progress.js"></script>',
     ]
