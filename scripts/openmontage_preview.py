@@ -6,6 +6,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -45,6 +46,14 @@ def _patch_hyperframes_package() -> None:
     HyperFramesCompose._cli_probe_cache = {"status": "ok"}
 
 
+def _tail(path: Path, limit: int = 5000) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return text[-limit:].strip()
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         raise RuntimeError("usage: openmontage_preview.py <job-json>")
@@ -72,7 +81,9 @@ def main() -> int:
         raise RuntimeError(result.error or "HyperFrames workspace scaffold failed")
 
     port = int(job.get("preview_port") or 3002)
+    preview_log = Path(f"/tmp/videogen-openmontage-preview-{port}.log")
     _log(f"Workspace ready. Preview port: {port}")
+
     if not _port_open(port):
         npx = shutil.which("npx") or "npx"
         env = os.environ.copy()
@@ -87,15 +98,35 @@ def main() -> int:
             "--force-new",
         ]
         _log("Starting: " + " ".join(cmd))
-        # stdout/stderr intentionally inherit from this helper. VideoGen redirects
-        # them into a per-project log so preview startup failures are visible.
-        subprocess.Popen(
-            cmd,
-            cwd=str(workspace),
-            env=env,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        with preview_log.open("w", encoding="utf-8") as log_file:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(workspace),
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+
+        # Do not report success until the Studio is actually listening. This
+        # prevents VideoGen from navigating the popup to a dead port while npx is
+        # still downloading/booting HyperFrames.
+        deadline = time.monotonic() + 90.0
+        while time.monotonic() < deadline:
+            if _port_open(port):
+                break
+            code = proc.poll()
+            if code is not None and code != 0:
+                detail = _tail(preview_log) or f"hyperframes preview exited {code}"
+                raise RuntimeError(f"HyperFrames Studio failed to start:\n{detail}")
+            time.sleep(0.5)
+        else:
+            detail = _tail(preview_log)
+            raise RuntimeError(
+                "HyperFrames Studio did not open its port within 90 seconds"
+                + (f". Log:\n{detail}" if detail else "")
+            )
     else:
         _log(f"Preview port {port} is already open; reusing existing Studio")
 
@@ -105,6 +136,7 @@ def main() -> int:
         "workspace": str(workspace),
         "port": port,
         "studio_path": f"/#project/{project_name}",
+        "preview_log": str(preview_log),
     })
     return 0
 
