@@ -416,7 +416,7 @@ class LlamaCppProvider(LLMProvider):
                 temperature=0.3 + 0.1 * attempt,
             )
             beats = extract_beats(response)
-            normalized = [re.sub(r"\\W+", "", event.casefold()) for _, event in beats]
+            normalized = [re.sub(r"\W+", "", event.casefold()) for _, event in beats]
             if len(beats) == target_count and len(set(normalized)) == target_count:
                 break
         else:
@@ -458,7 +458,7 @@ class LlamaCppProvider(LLMProvider):
             f"Language: {request.language}\n"
         )
         def normal(value: str) -> str:
-            return re.sub(r"\\s+", " ", re.sub(r"[^\\w\\s]", "", value.casefold())).strip()
+            return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", value.casefold())).strip()
         used_actions = {normal(s["action"]) for s in completed}
         used_narrations = {normal(s["narration"]) for s in completed}
         narrative = None
