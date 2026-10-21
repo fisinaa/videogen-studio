@@ -44,12 +44,12 @@ class Settings(BaseSettings):
 
     # Quality profile: Qwen3 14B tested on GTX 1660 6 GB. 25 GPU layers fit
     # reliably and provide a practical quality/speed balance for storyboard work.
-    llm_quality_model_name: str = "Qwen3.5-9B-Q6"
-    llm_quality_model_path: Path = Path("/home/faa/models/qwen35-9b/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf")
-    llm_quality_args: str = "--jinja -ngl 99 -c 16384 -fa on -t 10 -np 1"
+    llm_quality_model_name: str = "Qwen3-14B-Q4_K_M"
+    llm_quality_model_path: Path = Path("/home/faa/models/Qwen3-14B-Q4_K_M.gguf")
+    llm_quality_args: str = "--jinja -ngl 99 -c 8192 -fa on -t 10 -np 1"
 
     llm_profile_default: str = "fast"
-    llm_profile_storyboard: str = "fast"
+    llm_profile_storyboard: str = "quality"
     llm_profile_visual_prompt: str = "fast"
     llm_profile_rewrite: str = "fast"
 
