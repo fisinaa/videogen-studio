@@ -14,7 +14,8 @@ class Settings(BaseSettings):
     llm_api_key: str = "local"
     llm_timeout_seconds: int = 300
     llm_temperature: float = 0.7
-    llm_max_tokens: int = 1800
+    llm_max_tokens: int = 2048
+    llm_disable_thinking: bool = True
 
     # Automatic model/GPU orchestration.
     model_orchestration_enabled: bool = True
@@ -37,20 +38,20 @@ class Settings(BaseSettings):
     llm_log_file: Path = Path("/tmp/videogen-llama.log")
 
     # Fast profile: small model for optional low-latency work.
-    llm_fast_model_name: str = "Qwen3-8B"
-    llm_fast_model_path: Path = Path("/home/faa/models/Qwen3-8B-abliterated.Q4_K_M.gguf")
-    llm_fast_args: str = "-ngl 32 -c 4096 -ctk q8_0 -ctv q8_0 -t 12 -tb 12 -np 1"
+    llm_fast_model_name: str = "Qwen3.5-9B-Q6"
+    llm_fast_model_path: Path = Path("/home/faa/models/qwen35-9b/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf")
+    llm_fast_args: str = "--jinja -ngl 99 -c 16384 -fa on -t 10 -np 1"
 
     # Quality profile: Qwen3 14B tested on GTX 1660 6 GB. 25 GPU layers fit
     # reliably and provide a practical quality/speed balance for storyboard work.
-    llm_quality_model_name: str = "Qwen3-14B"
-    llm_quality_model_path: Path = Path("/home/faa/models/Qwen3-14B-Q4_K_M.gguf")
-    llm_quality_args: str = "-ngl 25 -c 4096 -ctk q8_0 -ctv q8_0 -t 12 -tb 12 -np 1"
+    llm_quality_model_name: str = "Qwen3.5-9B-Q6"
+    llm_quality_model_path: Path = Path("/home/faa/models/qwen35-9b/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf")
+    llm_quality_args: str = "--jinja -ngl 99 -c 16384 -fa on -t 10 -np 1"
 
     llm_profile_default: str = "fast"
-    llm_profile_storyboard: str = "quality"
-    llm_profile_visual_prompt: str = "quality"
-    llm_profile_rewrite: str = "quality"
+    llm_profile_storyboard: str = "fast"
+    llm_profile_visual_prompt: str = "fast"
+    llm_profile_rewrite: str = "fast"
 
     pexels_api_key: str = ""
     pixabay_api_key: str = ""
@@ -68,7 +69,7 @@ class Settings(BaseSettings):
     fal_key: str = ""
 
     # stable-diffusion.cpp shared runtime
-    sd_cpp_bin: Path = Path("/opt/stable-diffusion.cpp/build/bin/sd-cli")
+    sd_cpp_bin: Path = Path("/home/faa/stable-diffusion.cpp/build/bin/sd-cli")
     sd_cpp_vae: Path = Path("")
     sd_cpp_clip_l: Path = Path("")
     sd_cpp_t5xxl: Path = Path("")
@@ -78,6 +79,7 @@ class Settings(BaseSettings):
     sd_cpp_threads: int = 14
     sd_cpp_diffusion_fa: bool = True
     sd_cpp_offload_to_cpu: bool = True
+    # Conservative until RTX3060 benchmark verifies GPU residency.
     sd_cpp_verbose: bool = True
 
     # Local FAST profile (FLUX.1-schnell Q2_K)
@@ -110,12 +112,12 @@ class Settings(BaseSettings):
     sd_cpp_clip_on_cpu: bool = True
 
     # Conservative local render sizes for a 6 GB GPU.
-    sd_cpp_width_16_9: int = 768
-    sd_cpp_height_16_9: int = 432
-    sd_cpp_width_9_16: int = 432
-    sd_cpp_height_9_16: int = 768
-    sd_cpp_width_1_1: int = 512
-    sd_cpp_height_1_1: int = 512
+    sd_cpp_width_16_9: int = 1024
+    sd_cpp_height_16_9: int = 576
+    sd_cpp_width_9_16: int = 576
+    sd_cpp_height_9_16: int = 1024
+    sd_cpp_width_1_1: int = 768
+    sd_cpp_height_1_1: int = 768
 
     # Motion / image-to-video routing.
     # openmontage: use OpenMontage VideoSelector and its provider registry.
