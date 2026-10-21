@@ -311,6 +311,8 @@ class LlamaCppProvider(LLMProvider):
                 "temperature": temperature,
                 "max_tokens": max_tokens,
             }
+            if settings.llm_disable_thinking:
+                payload["chat_template_kwargs"] = {"enable_thinking": False}
             timeout = httpx.Timeout(settings.llm_timeout_seconds)
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(
@@ -320,7 +322,11 @@ class LlamaCppProvider(LLMProvider):
                 )
                 response.raise_for_status()
             data = response.json()
-            return data["choices"][0]["message"]["content"]
+            message = data["choices"][0]["message"]
+            content = message.get("content") or ""
+            if not content.strip():
+                raise ValueError("LLM returned empty content; check thinking mode and max_tokens")
+            return content
 
     async def _create_outline(self, request: CreateProjectRequest) -> dict:
         target_scene_count = max(1, round(request.duration_seconds / 10))
