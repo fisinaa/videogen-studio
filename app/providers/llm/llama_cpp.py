@@ -608,6 +608,27 @@ class LlamaCppProvider(LLMProvider):
         except ValidationError as exc:
             raise ValueError(f"Assembled storyboard schema invalid: {exc}") from exc
 
+        # Validate across batches as well as within each batch.
+        def canonical(value: str) -> str:
+            return re.sub(r"\\s+", " ", re.sub(r"[^\\w\\s]", "", value.casefold())).strip()
+
+        seen_actions: dict[str, str] = {}
+        seen_narrations: dict[str, str] = {}
+        for scene in storyboard.scenes:
+            for value, seen, label in (
+                (scene.action, seen_actions, "action"),
+                (scene.narration, seen_narrations, "narration"),
+            ):
+                key = canonical(value)
+                if not key:
+                    raise ValueError(f"{scene.id}: missing {label}")
+                if key in seen:
+                    raise ValueError(
+                        f"Storyboard contains identical {label} in "
+                        f"{seen[key]} and {scene.id}; regenerate with a more specific story idea"
+                    )
+                seen[key] = scene.id
+
         actual = _duration_seconds(storyboard)
         if abs(actual - request.duration_seconds) > 0.01:
             raise ValueError(
