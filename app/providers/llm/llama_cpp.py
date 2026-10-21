@@ -230,7 +230,7 @@ def _extract_block_fields(content: str, scene_id: str) -> dict[str, str]:
     match = pattern.search(content)
     # Never reuse the entire multi-scene response as a missing scene's fields.
     # A single unwrapped scene is permitted only for single-scene calls.
-    if not match and re.search(r"\\[/?scene-\\d+\\]", content, re.IGNORECASE):
+    if not match and re.search(r"\[/?scene-\d+\]", content, re.IGNORECASE):
         return {}
     block = match.group(1) if match else content
     fields: dict[str, str] = {}
