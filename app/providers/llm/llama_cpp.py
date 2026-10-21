@@ -171,9 +171,8 @@ def _parse_outline_text(content: str, target_scene_count: int, target_duration: 
         )
 
     scene_ideas = scene_ideas[:target_scene_count]
-    while len(scene_ideas) < target_scene_count:
-        _, previous_beat = scene_ideas[-1]
-        scene_ideas.append((f"Continuation {len(scene_ideas) + 1}", previous_beat))
+    if len(scene_ideas) != target_scene_count:
+        raise ValueError(f"Expected {target_scene_count} distinct scene beats, got {len(scene_ideas)}")
 
     durations = _scene_durations(target_duration, target_scene_count)
     scenes: list[dict] = []
@@ -369,20 +368,27 @@ class LlamaCppProvider(LLMProvider):
             return _parse_outline_text(retry_content, target_scene_count, request.duration_seconds)
 
     async def _expand_batch(self, request: CreateProjectRequest, outline: dict, batch: list[dict]) -> list[dict]:
+        # Supply the complete plot to every batch; otherwise the model loses continuity.
+        plot = "\n".join(
+            f"{scene['id']} | {scene['title']} | {scene['beat']}" for scene in outline["scenes"]
+        )
         scene_lines = "\n".join(
             f"{scene['id']} | {scene['duration_seconds']:.0f}s | {scene['title']} | {scene['beat']}"
             for scene in batch
         )
-        prompt = (
-            f"Project title: {outline['title']}\n"
+        context = (
+            f"Project: {outline['title']}\n"
             f"Logline: {outline['logline']}\n"
             f"Visual style: {outline['visual_style']}\n"
-            f"Canonical character descriptions: {'; '.join(outline['characters'])}\n"
-            f"Narration/dialogue language: {request.language}\n\n"
-            "Expand these scenes:\n"
-            f"{scene_lines}\n\n"
-            "For every image prompt, repeat the stable character traits that are actually visible in the shot. "
-            "Make the scene's important object and spatial relationship explicit. Return one marked block for every supplied scene id."
+            f"Canonical character traits (immutable): {'; '.join(outline['characters'])}\n"
+            f"Narration language: {request.language}\n"
+            f"COMPLETE plot with scene order:\n{plot}\n"
+        )
+        prompt = (
+            context + "\nExpand ONLY these scenes:\n" + scene_lines +
+            "\nEvery scene must enact its OWN beat, not reuse an adjacent scene. "
+            "The protagonist's physical traits cannot change. "
+            "Return separately tagged blocks for each scene."
         )
         content = await self._chat(
             messages=[
@@ -393,30 +399,69 @@ class LlamaCppProvider(LLMProvider):
             temperature=settings.llm_temperature,
         )
         parsed = _parse_detail_blocks(content, batch)
-        for index, item in enumerate(parsed):
+        previous_actions: set[str] = set()
+        previous_narrations: set[str] = set()
+
+        def normalized(value: str) -> str:
+            return re.sub(r"\\s+", " ", re.sub(r"[^\\w\\s]", "", value.lower())).strip()
+
+        for index, source in enumerate(batch):
+            item = parsed[index]
             fields = item.pop("_raw_fields", {})
-            if all(fields.get(key, "").strip() for key in ("NARRATION", "ACTION", "VISUAL_EN")):
-                continue
-            # Retry only the missing/incomplete scene, not the entire batch.
-            source = batch[index]
-            retry_prompt = (
-                prompt + f"\\n\\nReturn ONLY the complete [{source['id']}] block for "
-                f"{source['title']}. Specific scene beat: {source['beat']}. "
-                "Include NARRATION, DIALOGUE, ACTION, VISUAL_RU, VISUAL_EN, NEGATIVE, SEARCH."
+            wrapped = bool(re.search(
+                rf"\\[{re.escape(source['id'])}\\].*?\\[/{re.escape(source['id'])}\\]",
+                content, re.IGNORECASE | re.DOTALL,
+            ))
+            action = normalized(item["action"])
+            narration = normalized(item["narration"])
+            valid = (
+                wrapped
+                and all(fields.get(k, "").strip() for k in ("NARRATION", "ACTION", "VISUAL_EN"))
+                and action not in previous_actions
+                and narration not in previous_narrations
             )
-            retry = await self._chat(
-                messages=[
-                    {"role": "system", "content": SINGLE_SCENE_SYSTEM_PROMPT},
-                    {"role": "user", "content": retry_prompt},
-                ],
-                max_tokens=1000,
-                temperature=0.35,
-            )
-            repaired = _parse_detail_blocks(retry, [source])[0]
-            repaired_fields = repaired.pop("_raw_fields", {})
-            if not all(repaired_fields.get(key, "").strip() for key in ("NARRATION", "ACTION", "VISUAL_EN")):
-                raise ValueError(f"LLM returned incomplete scene {source['id']} after retry")
-            parsed[index] = repaired
+            if not valid:
+                # One scene per retry. No copying an unwrapped response to all scenes.
+                for attempt in range(2):
+                    single_prompt = (
+                        context +
+                        f"\nWRITE ONLY {source['id']}: {source['title']}\n"
+                        f"Unique event for this scene: {source['beat']}\n"
+                        f"Scene duration: {source['duration_seconds']} seconds.\n"
+                        "Do not repeat earlier events or their narration. "
+                        "Maintain the protagonist's canonical physical appearance.\n"
+                        "Previously used actions:\n" + "\n".join(previous_actions) +
+                        "\nPreviously used narration:\n" + "\n".join(previous_narrations) +
+                        f"\nReturn one complete [{source['id']}] ... [/{source['id']}] block."
+                    )
+                    retry = await self._chat(
+                        messages=[
+                            {"role": "system", "content": SINGLE_SCENE_SYSTEM_PROMPT},
+                            {"role": "user", "content": single_prompt},
+                        ],
+                        max_tokens=1100,
+                        temperature=0.35 + attempt * 0.1,
+                    )
+                    candidate = _parse_detail_blocks(retry, [source])[0]
+                    candidate_fields = candidate.pop("_raw_fields", {})
+                    candidate_action = normalized(candidate["action"])
+                    candidate_narration = normalized(candidate["narration"])
+                    if (
+                        all(candidate_fields.get(k, "").strip() for k in ("NARRATION", "ACTION", "VISUAL_EN"))
+                        and candidate_action not in previous_actions
+                        and candidate_narration not in previous_narrations
+                    ):
+                        item = candidate
+                        action, narration = candidate_action, candidate_narration
+                        break
+                else:
+                    raise ValueError(
+                        f"Storyline validation failed for {source['id']}: "
+                        "incomplete or duplicated scene after retries"
+                    )
+            previous_actions.add(action)
+            previous_narrations.add(narration)
+            parsed[index] = item
         return parsed
 
     def _visual_context(self, storyboard: Storyboard, scene: Scene) -> str:
