@@ -84,11 +84,11 @@ function readableStoryboard(p){
     lines.push('', '────────────────────────────',String(scene.id||'scene')+' — '+String(scene.title||''), 'Длительность: '+String(scene.duration_seconds??'?')+' сек');
     if(scene.action)lines.push('Действие: '+scene.action);
     if(scene.narration)lines.push('Закадровый текст: '+scene.narration);
-    if(scene.dialogue?.length)lines.push('Диалоги:\\n'+scene.dialogue.join('\\n'));
+    if(scene.dialogue?.length)lines.push('Диалоги:\n'+scene.dialogue.join('\n'));
     if(scene.visual_prompt_ru)lines.push('Визуальное описание: '+scene.visual_prompt_ru);
     else if(scene.visual_prompt)lines.push('Визуальное описание: '+scene.visual_prompt);
   }
-  return lines.join('\\n').replace(/\\n{3,}/g,'\\n\\n').trim();
+  return lines.join('\n').replace(/\n{3,}/g,'\n\n').trim();
 }
 function updateStoryboardReader(p){
   const panel=document.getElementById('storyboard-reader');
