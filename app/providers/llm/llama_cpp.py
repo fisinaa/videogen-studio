@@ -229,6 +229,10 @@ def _extract_block_fields(content: str, scene_id: str) -> dict[str, str]:
         re.IGNORECASE | re.DOTALL,
     )
     match = pattern.search(content)
+    # Never reuse the entire multi-scene response as a missing scene's fields.
+    # A single unwrapped scene is permitted only for single-scene calls.
+    if not match and re.search(r"\\[/?scene-\\d+\\]", content, re.IGNORECASE):
+        return {}
     block = match.group(1) if match else content
     fields: dict[str, str] = {}
     valid = {
@@ -389,8 +393,30 @@ class LlamaCppProvider(LLMProvider):
             temperature=settings.llm_temperature,
         )
         parsed = _parse_detail_blocks(content, batch)
-        for item in parsed:
-            item.pop("_raw_fields", None)
+        for index, item in enumerate(parsed):
+            fields = item.pop("_raw_fields", {})
+            if all(fields.get(key, "").strip() for key in ("NARRATION", "ACTION", "VISUAL_EN")):
+                continue
+            # Retry only the missing/incomplete scene, not the entire batch.
+            source = batch[index]
+            retry_prompt = (
+                prompt + f"\\n\\nReturn ONLY the complete [{source['id']}] block for "
+                f"{source['title']}. Specific scene beat: {source['beat']}. "
+                "Include NARRATION, DIALOGUE, ACTION, VISUAL_RU, VISUAL_EN, NEGATIVE, SEARCH."
+            )
+            retry = await self._chat(
+                messages=[
+                    {"role": "system", "content": SINGLE_SCENE_SYSTEM_PROMPT},
+                    {"role": "user", "content": retry_prompt},
+                ],
+                max_tokens=1000,
+                temperature=0.35,
+            )
+            repaired = _parse_detail_blocks(retry, [source])[0]
+            repaired_fields = repaired.pop("_raw_fields", {})
+            if not all(repaired_fields.get(key, "").strip() for key in ("NARRATION", "ACTION", "VISUAL_EN")):
+                raise ValueError(f"LLM returned incomplete scene {source['id']} after retry")
+            parsed[index] = repaired
         return parsed
 
     def _visual_context(self, storyboard: Storyboard, scene: Scene) -> str:
