@@ -13,6 +13,11 @@
     .image-lightbox img{max-width:100%;max-height:100%;object-fit:contain;box-shadow:0 10px 50px #0008;cursor:default}
     .image-lightbox-close{position:absolute;right:16px;top:12px;background:#252b37;color:#fff;font-size:25px;padding:6px 13px}
     body.lightbox-open{overflow:hidden}
+  
+    .storyboard-reader{margin-top:20px;border:1px solid #303646;border-radius:14px;padding:16px;background:#0e1118}
+    .storyboard-reader-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+    .storyboard-reader-head h3{margin:0;font-size:18px}
+    .storyboard-reader pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.7 ui-sans-serif,system-ui,sans-serif;color:#e3e6ed;max-height:65vh;overflow:auto}
   </style>
 </head>
 <body>
@@ -34,6 +39,10 @@
         </div>
         <button id="submit" type="submit">Создать storyboard</button>
       </form>
+      <section class="storyboard-reader" id="storyboard-reader" hidden aria-label="Сценарий для чтения">
+        <div class="storyboard-reader-head"><h3>Сценарий для чтения</h3><button class="secondary" type="button" id="copy-storyboard">Копировать текст</button></div>
+        <pre id="storyboard-reader-text"></pre>
+      </section>
     </section>
     <section class="card"><h2>Storyboard editor</h2><div id="status" class="muted">Жду задачу.</div><div id="result"></div></section>
   </div>
@@ -67,7 +76,32 @@ function mediaHtml(s){const m=s.selected_media;if(!m)return `<div class="selecte
 function galleryHtml(s){const items=s.media_candidates||[];if(!items.length)return `<div class="candidate-gallery"><div class="candidate-section"><b>Варианты изображения</b><div class="muted">Пока пусто. Генерации будут добавляться сюда и не будут затирать уже выбранную картинку.</div></div></div>`;const selected=s.selected_media?.asset_id;return `<div class="candidate-gallery"><div class="candidate-section"><b>Варианты изображения (${items.length})</b><div class="candidate-grid">${items.map(a=>`<div class="candidate-card ${a.asset_id===selected?'selected':''}" data-asset-id="${esc(a.asset_id)}">${a.asset_id===selected?'<span class="selected-mark">ВЫБРАНО</span>':''}${a.preview_url?`<img src="${esc(cacheUrl(a.preview_url,a.asset_id))}" alt="preview">`:''}<div class="candidate-info"><b>${esc(a.provider)}</b><div class="muted">${esc(a.label||a.asset_id)}</div><div class="candidate-actions"><button class="secondary choose-candidate" ${a.asset_id===selected?'disabled':''}>Выбрать</button><button class="danger delete-candidate" ${a.asset_id===selected?'disabled':''}>Убрать</button></div></div></div>`).join('')}</div></div></div>`}
 function audioHtml(s){const a=s.selected_audio;if(!a)return `<div class="selected-audio-slot"></div>`;return `<div class="selected-audio-slot"><div class="selected-audio"><b>Озвучка:</b> ${esc(a.provider)} · ${esc(a.voice||'')}<audio controls preload="none" src="${esc(cacheUrl(a.audio_url,a.asset_id))}"></audio><div class="muted">${esc(a.label||a.asset_id)}</div></div></div>`}
 function sceneEditor(s){const visualEn=s.visual_prompt_en||s.visual_prompt||'';return `<div class="scene-editor" data-scene-id="${esc(s.id)}"><div class="scene-head"><span class="badge">${esc(s.id)}</span><div class="scene-actions"><button class="secondary save-scene">Сохранить</button><button class="warn regen-scene">Перегенерировать</button><button class="prompt-builder rebuild-prompt">Обновить visual prompt</button><button class="media search-media">Найти stock</button><button class="next generate-next" ${LOCAL_NEXT_ENABLED?'':'disabled'}>Сгенерировать изображение</button><button class="openai generate-openai">OpenAI Final</button><button class="tts generate-audio">Озвучить</button></div></div><label>Название<input class="f-title" value="${esc(s.title)}"></label><label>Длительность, сек<input class="f-duration" type="number" min="0.1" step="0.1" value="${esc(s.duration_seconds)}"></label><label>Наррация<textarea class="f-narration">${esc(s.narration)}</textarea></label><label>Диалоги<textarea class="f-dialogue">${esc((s.dialogue||[]).join('\n'))}</textarea></label><label>Действие<textarea class="f-action">${esc(s.action)}</textarea></label><div class="prompt-fields"><label>Visual prompt RU<textarea class="f-visual-ru">${esc(s.visual_prompt_ru||'')}</textarea></label><label>Visual prompt EN — используется image-моделями<textarea class="f-visual-en">${esc(visualEn)}</textarea></label><label>Negative prompt EN<textarea class="f-negative">${esc(s.negative_prompt_en||'')}</textarea></label><label>Media search query<input class="f-search" value="${esc(s.media_search_query||'')}"></label></div><label class="reference-toggle"><input type="checkbox" class="use-reference" data-touched="0">Использовать Character Reference для этой генерации</label>${mediaHtml(s)}${galleryHtml(s)}${audioHtml(s)}<div class="scene-message muted"></div><div class="media-results"></div></div>`}
-function renderProject(p){currentProject=p;const sb=p.storyboard,missingAudio=sb.scenes.filter(s=>!s.selected_audio).length;result.innerHTML=`<h3>${esc(sb.title)}</h3><p>${esc(sb.logline)}</p><div class="muted">${esc(sb.visual_style)}</div><div class="summary"><span class="badge">Сцен: ${sb.scenes.length}</span><span class="badge">Storyboard: ${duration(p).toFixed(1)}s</span><span class="badge">Project ID: ${esc(p.id)}</span><span class="badge">Без озвучки: ${missingAudio}</span><span class="badge">Reference: ${p.character_reference?'ON':'OFF'}</span></div>${bibleHtml(p)}${referenceHtml(p)}<div class="project-actions"><button class="prepare" id="prepare-all">Prepare All</button><button class="openai" id="generate-character-reference">${p.character_reference?'Перегенерировать эталон':'Создать эталон персонажа'}</button><button class="next" id="generate-all-next" ${LOCAL_NEXT_ENABLED?'':'disabled'}>Сгенерировать все изображения (FLUX.2)</button><button class="openai" id="generate-all-openai">Все OpenAI Final</button><button class="tts" id="generate-all-audio">Озвучить отсутствующие</button><button class="danger" id="delete-project">Удалить проект совсем</button></div><div id="bulk-progress" class="progress muted" style="display:none"></div>${sb.scenes.map(sceneEditor).join('')}`;bindSceneButtons();bindProjectButtons();active(p.id)}
+
+function readableStoryboard(p){
+  const sb=p.storyboard||{};
+  const lines=[sb.title||'Без названия',sb.logline||'',sb.visual_style?'Стиль: '+sb.visual_style:''];
+  for(const scene of sb.scenes||[]){
+    lines.push('', '────────────────────────────',String(scene.id||'scene')+' — '+String(scene.title||''), 'Длительность: '+String(scene.duration_seconds??'?')+' сек');
+    if(scene.action)lines.push('Действие: '+scene.action);
+    if(scene.narration)lines.push('Закадровый текст: '+scene.narration);
+    if(scene.dialogue?.length)lines.push('Диалоги:\\n'+scene.dialogue.join('\\n'));
+    if(scene.visual_prompt_ru)lines.push('Визуальное описание: '+scene.visual_prompt_ru);
+    else if(scene.visual_prompt)lines.push('Визуальное описание: '+scene.visual_prompt);
+  }
+  return lines.join('\\n').replace(/\\n{3,}/g,'\\n\\n').trim();
+}
+function updateStoryboardReader(p){
+  const panel=document.getElementById('storyboard-reader');
+  const pre=document.getElementById('storyboard-reader-text');
+  panel.hidden=false;
+  pre.textContent=readableStoryboard(p);
+}
+document.getElementById('copy-storyboard').addEventListener('click',async e=>{
+  const button=e.currentTarget;
+  try{await navigator.clipboard.writeText(document.getElementById('storyboard-reader-text').textContent);button.textContent='Скопировано';setTimeout(()=>button.textContent='Копировать текст',1600)}
+  catch(err){button.textContent='Не удалось скопировать';setTimeout(()=>button.textContent='Копировать текст',1600)}
+});
+function renderProject(p){currentProject=p;updateStoryboardReader(p);const sb=p.storyboard,missingAudio=sb.scenes.filter(s=>!s.selected_audio).length;result.innerHTML=`<h3>${esc(sb.title)}</h3><p>${esc(sb.logline)}</p><div class="muted">${esc(sb.visual_style)}</div><div class="summary"><span class="badge">Сцен: ${sb.scenes.length}</span><span class="badge">Storyboard: ${duration(p).toFixed(1)}s</span><span class="badge">Project ID: ${esc(p.id)}</span><span class="badge">Без озвучки: ${missingAudio}</span><span class="badge">Reference: ${p.character_reference?'ON':'OFF'}</span></div>${bibleHtml(p)}${referenceHtml(p)}<div class="project-actions"><button class="prepare" id="prepare-all">Prepare All</button><button class="openai" id="generate-character-reference">${p.character_reference?'Перегенерировать эталон':'Создать эталон персонажа'}</button><button class="next" id="generate-all-next" ${LOCAL_NEXT_ENABLED?'':'disabled'}>Сгенерировать все изображения (FLUX.2)</button><button class="openai" id="generate-all-openai">Все OpenAI Final</button><button class="tts" id="generate-all-audio">Озвучить отсутствующие</button><button class="danger" id="delete-project">Удалить проект совсем</button></div><div id="bulk-progress" class="progress muted" style="display:none"></div>${sb.scenes.map(sceneEditor).join('')}`;bindSceneButtons();bindProjectButtons();active(p.id)}
 function refreshSceneMedia(id,p){currentProject=p;const s=sceneById(p,id),e=document.querySelector(`.scene-editor[data-scene-id="${CSS.escape(id)}"]`);if(!s||!e)return;for(const [selector,html] of [['.selected-media-slot',mediaHtml(s)],['.candidate-gallery',galleryHtml(s)]]){const slot=e.querySelector(selector);if(slot){const w=document.createElement('div');w.innerHTML=html;slot.replaceWith(w.firstElementChild)}}bindGalleryButtons(e)}
 function updateAudio(id,p){currentProject=p;const s=sceneById(p,id),e=document.querySelector(`.scene-editor[data-scene-id="${CSS.escape(id)}"]`),slot=e?.querySelector('.selected-audio-slot');if(s&&slot){const w=document.createElement('div');w.innerHTML=audioHtml(s);slot.replaceWith(w.firstElementChild)}}
 function readScene(e){const visualEn=e.querySelector('.f-visual-en').value.trim();return{title:e.querySelector('.f-title').value.trim(),duration_seconds:Number(e.querySelector('.f-duration').value),narration:e.querySelector('.f-narration').value,dialogue:e.querySelector('.f-dialogue').value.split('\n').map(v=>v.trim()).filter(Boolean),action:e.querySelector('.f-action').value.trim(),visual_prompt:visualEn,visual_prompt_ru:e.querySelector('.f-visual-ru').value.trim(),visual_prompt_en:visualEn,negative_prompt_en:e.querySelector('.f-negative').value.trim(),media_search_query:e.querySelector('.f-search').value.trim()}}
