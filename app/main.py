@@ -284,7 +284,8 @@ async def get_project_audio(project_id: str, filename: str):
 @app.post("/api/projects")
 async def create_project(payload: CreateProjectRequest):
     try:
-        storyboard = await llm.create_storyboard(payload)
+        with model_orchestrator.use_llm_profile(payload.llm_profile or settings.llm_profile_storyboard):
+            storyboard = await llm.create_storyboard(payload)
     except HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"LLM backend request failed: {exc}") from exc
     except (ValueError, KeyError) as exc:
