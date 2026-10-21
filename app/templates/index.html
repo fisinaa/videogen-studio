@@ -80,6 +80,8 @@ function sceneEditor(s){const visualEn=s.visual_prompt_en||s.visual_prompt||'';r
 function readableStoryboard(p){
   const sb=p.storyboard||{};
   const lines=[sb.title||'Без названия',sb.logline||'',sb.visual_style?'Стиль: '+sb.visual_style:''];
+  if(sb.story_arc)lines.push('','ИСТОРИЯ ЦЕЛИКОМ:',sb.story_arc);
+  if(sb.story_beats?.length)lines.push('','СОБЫТИЯ:',...sb.story_beats.map((beat,i)=>`scene-${String(i+1).padStart(3,'0')} — ${beat}`));
   for(const scene of sb.scenes||[]){
     lines.push('', '────────────────────────────',String(scene.id||'scene')+' — '+String(scene.title||''), 'Длительность: '+String(scene.duration_seconds??'?')+' сек');
     if(scene.action)lines.push('Действие: '+scene.action);
