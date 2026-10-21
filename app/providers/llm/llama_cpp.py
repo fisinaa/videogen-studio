@@ -10,6 +10,44 @@ from app.schemas import CreateProjectRequest, Scene, Storyboard
 from app.services.model_orchestrator import model_orchestrator
 
 
+STORY_SYSTEM_PROMPT = """You are a skilled writer of coherent short animated films.
+Write a complete, causally connected story BEFORE any scene breakdown.
+No markdown, no reasoning. Return only:
+TITLE: short title
+LOGLINE: one sentence
+STYLE: concise visual style
+CHARACTER: immutable protagonist appearance (fur, eyes, clothes, distinctive features)
+STORY: a complete coherent story in 120-300 words, one line
+
+Story must have a clear starting situation, inciting incident, escalating obstacle,
+meaningful choice and resolution. Keep location and time changes plausible.
+Every event must follow from previous events. No unexplained teleports,
+random unrelated creatures or changes in protagonist appearance.
+Use the user's language. Do not quote copyrighted stories.
+"""
+
+BEATS_SYSTEM_PROMPT = """You break an ALREADY WRITTEN story into concrete chronological events.
+Do not invent a new plot. No markdown, no JSON, no reasoning.
+Return exactly the requested number of lines of the form:
+SCENE: short scene title :: unique physical event that changes the situation
+
+Each line must show a different event of the provided story.
+Follow the story's beginning-to-end chronology. Ensure causal progression.
+Do not use the same action for multiple scene lines.
+No repeating scene titles, no weather filler, no random animal encounters.
+"""
+
+NARRATIVE_SCENE_SYSTEM_PROMPT = """You write ONE scene's narration and visible action.
+No markdown, no reasoning. Return ONLY:
+NARRATION: one concise original Russian narration sentence
+DIALOGUE: NONE, or spoken character dialogue
+ACTION: one unique concrete visible action that enacts CURRENT BEAT
+
+Never repeat an earlier scene's action or narration.
+Preserve the complete story and the protagonist's immutable appearance.
+Never replace current scene's event with a later event.
+"""
+
 OUTLINE_SYSTEM_PROMPT = """You are a planning engine for an AI video production studio.
 Do NOT return JSON. Do NOT use markdown. Do NOT expose chain-of-thought.
 
@@ -332,40 +370,146 @@ class LlamaCppProvider(LLMProvider):
             return content
 
     async def _create_outline(self, request: CreateProjectRequest) -> dict:
-        target_scene_count = max(1, round(request.duration_seconds / 10))
-        prompt = (
-            f"User idea:\n{request.prompt}\n\n"
+        target_count = max(1, round(request.duration_seconds / 10))
+        story_prompt = (
+            f"User idea:\n{request.prompt}\n"
             f"Project type: {request.project_type}\n"
-            f"Aspect ratio: {request.aspect_ratio}\n"
-            f"Target duration: {request.duration_seconds} seconds\n"
-            f"Required SCENE lines: exactly {target_scene_count}\n"
-            f"Language for TITLE, LOGLINE, CHARACTER and SCENE text: {request.language}\n\n"
-            f"Return exactly {target_scene_count} SCENE: lines. Keep each scene idea very short."
+            f"Language: {request.language}\n"
+            f"Target length: {request.duration_seconds} seconds.\n"
+            "Write the coherent full story BEFORE splitting into shots."
         )
-        content = await self._chat(
-            messages=[
-                {"role": "system", "content": OUTLINE_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
+        story_text = await self._chat(
+            [{"role": "system", "content": STORY_SYSTEM_PROMPT},
+             {"role": "user", "content": story_prompt}],
+            max_tokens=1100, temperature=0.65,
+        )
+        story_fields = {}
+        for line in story_text.splitlines():
+            key, sep, value = line.partition(":")
+            if sep and key.strip().upper() in {"TITLE", "LOGLINE", "STYLE", "CHARACTER", "STORY"}:
+                story_fields[key.strip().upper()] = value.strip()
+        story = story_fields.get("STORY", "")
+        if len(story.split()) < 55 or not story_fields.get("CHARACTER"):
+            raise ValueError("LLM failed to produce a complete story and immutable character description")
+        beats_prompt = (
+            f"FULL STORY (follow exactly):\n{story}\n"
+            f"Protagonist: {story_fields['CHARACTER']}\n"
+            f"Required events: {target_count}.\n"
+            f"Return exactly {target_count} SCENE lines, earliest to latest."
+        )
+        def extract_beats(content: str) -> list[tuple[str, str]]:
+            result = []
+            for line in content.splitlines():
+                if not line.strip().upper().startswith("SCENE:"):
+                    continue
+                parts = line.split(":", 1)[1].split("::", 1)
+                if len(parts) != 2 or not all(part.strip() for part in parts):
+                    continue
+                result.append((parts[0].strip(), parts[1].strip()))
+            return result
+        beats = []
+        for attempt in range(3):
+            response = await self._chat(
+                [{"role": "system", "content": BEATS_SYSTEM_PROMPT},
+                 {"role": "user", "content": beats_prompt}],
+                max_tokens=max(600, target_count * 65),
+                temperature=0.3 + 0.1 * attempt,
+            )
+            beats = extract_beats(response)
+            normalized = [re.sub(r"\\W+", "", event.casefold()) for _, event in beats]
+            if len(beats) == target_count and len(set(normalized)) == target_count:
+                break
+        else:
+            raise ValueError(
+                f"Could not generate {target_count} distinct plot beats; received {len(beats)}"
+            )
+        durations = _scene_durations(request.duration_seconds, target_count)
+        return {
+            "title": story_fields.get("TITLE") or "Без названия",
+            "logline": story_fields.get("LOGLINE") or story[:150],
+            "visual_style": story_fields.get("STYLE") or "cinematic animation",
+            "characters": [story_fields["CHARACTER"]],
+            "story_arc": story,
+            "scenes": [
+                {"id": f"scene-{i:03d}", "title": title,
+                 "duration_seconds": duration, "beat": beat}
+                for i, ((title, beat), duration) in enumerate(zip(beats, durations), 1)
             ],
-            max_tokens=min(1800, max(700, target_scene_count * 55)),
-            temperature=settings.llm_temperature,
+        }
+
+    async def _expand_scene(self, request: CreateProjectRequest, outline: dict,
+                            index: int, completed: list[dict]) -> dict:
+        source = outline["scenes"][index]
+        prev = outline["scenes"][index - 1]["beat"] if index else "NONE"
+        nxt = (outline["scenes"][index + 1]["beat"]
+               if index + 1 < len(outline["scenes"]) else "NONE")
+        used = "\n".join(
+            f"{s['id']}: {s['action']} | {s['narration']}" for s in completed
+        ) or "NONE"
+        context = (
+            f"Full story:\n{outline['story_arc']}\n"
+            f"Character (immutable): {'; '.join(outline['characters'])}\n"
+            f"Visual style: {outline['visual_style']}\n"
+            f"Previous beat: {prev}\n"
+            f"CURRENT SCENE: {source['id']} | {source['title']}\n"
+            f"CURRENT BEAT (must depict this): {source['beat']}\n"
+            f"Next beat: {nxt}\n"
+            f"Already used scenes:\n{used}\n"
+            f"Language: {request.language}\n"
         )
-        try:
-            return _parse_outline_text(content, target_scene_count, request.duration_seconds)
-        except ValueError:
-            retry_prompt = prompt + (
-                "\nIMPORTANT: your previous answer did not contain enough SCENE: lines. "
-                f"Return exactly {target_scene_count} SCENE: lines now. No commentary."
+        def normal(value: str) -> str:
+            return re.sub(r"\\s+", " ", re.sub(r"[^\\w\\s]", "", value.casefold())).strip()
+        used_actions = {normal(s["action"]) for s in completed}
+        used_narrations = {normal(s["narration"]) for s in completed}
+        narrative = None
+        for attempt in range(3):
+            answer = await self._chat(
+                [{"role": "system", "content": NARRATIVE_SCENE_SYSTEM_PROMPT},
+                 {"role": "user", "content": context + "Write ONLY this scene."}],
+                max_tokens=400, temperature=0.4 + 0.1 * attempt,
             )
-            retry_content = await self._chat(
-                messages=[
-                    {"role": "system", "content": OUTLINE_SYSTEM_PROMPT},
-                    {"role": "user", "content": retry_prompt},
-                ],
-                max_tokens=min(1800, max(700, target_scene_count * 55)),
-                temperature=0.3,
+            fields = _extract_block_fields(answer, source["id"])
+            action, narration = fields.get("ACTION", ""), fields.get("NARRATION", "")
+            if (action.strip() and narration.strip()
+                    and normal(action) not in used_actions
+                    and normal(narration) not in used_narrations):
+                narrative = fields
+                break
+        if narrative is None:
+            raise ValueError(f"{source['id']}: repeated or incomplete narrative after retries")
+        visual_context = (
+            context +
+            f"FINAL ACTION (do not change): {narrative['ACTION']}\n"
+            f"FINAL NARRATION: {narrative['NARRATION']}\n"
+            "Write image prompts that SHOW this action, not a different plot event. "
+            "Use the character bible verbatim where relevant."
+        )
+        visual_fields = {}
+        for attempt in range(2):
+            visual_answer = await self._chat(
+                [{"role": "system", "content": VISUAL_ONLY_SYSTEM_PROMPT},
+                 {"role": "user", "content": visual_context}],
+                max_tokens=1050, temperature=0.3 + 0.1 * attempt,
             )
-            return _parse_outline_text(retry_content, target_scene_count, request.duration_seconds)
+            visual_fields = _extract_block_fields(visual_answer, source["id"])
+            if visual_fields.get("VISUAL_EN", "").strip() and visual_fields.get("VISUAL_RU", "").strip():
+                break
+        else:
+            raise ValueError(f"{source['id']}: image prompt generation incomplete")
+        dialogue_raw = narrative.get("DIALOGUE", "")
+        return {
+            "id": source["id"],
+            "title": source["title"],
+            "duration_seconds": source["duration_seconds"],
+            "narration": narrative["NARRATION"],
+            "dialogue": ([] if dialogue_raw.upper() in {"NONE", "-", ""} else [dialogue_raw]),
+            "action": narrative["ACTION"],
+            "visual_prompt": visual_fields["VISUAL_EN"],
+            "visual_prompt_ru": visual_fields["VISUAL_RU"],
+            "visual_prompt_en": visual_fields["VISUAL_EN"],
+            "negative_prompt_en": visual_fields.get("NEGATIVE", ""),
+            "media_search_query": visual_fields.get("SEARCH", ""),
+        }
 
     async def _expand_batch(self, request: CreateProjectRequest, outline: dict, batch: list[dict]) -> list[dict]:
         # Supply the complete plot to every batch; otherwise the model loses continuity.
@@ -592,14 +736,15 @@ class LlamaCppProvider(LLMProvider):
         outline = await self._create_outline(request)
         outline_scenes = outline["scenes"]
         detailed_scenes: list[dict] = []
-        for start in range(0, len(outline_scenes), self.batch_size):
-            batch = outline_scenes[start : start + self.batch_size]
-            detailed_scenes.extend(await self._expand_batch(request, outline, batch))
+        for index in range(len(outline_scenes)):
+            detailed_scenes.append(await self._expand_scene(request, outline, index, detailed_scenes))
 
         payload = {
             "title": outline["title"],
             "logline": outline["logline"],
             "visual_style": outline["visual_style"],
+            "story_arc": outline["story_arc"],
+            "story_beats": [scene["beat"] for scene in outline_scenes],
             "characters": outline["characters"],
             "scenes": detailed_scenes,
         }
