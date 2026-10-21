@@ -403,13 +403,13 @@ class LlamaCppProvider(LLMProvider):
         previous_narrations: set[str] = set()
 
         def normalized(value: str) -> str:
-            return re.sub(r"\\s+", " ", re.sub(r"[^\\w\\s]", "", value.lower())).strip()
+            return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", value.lower())).strip()
 
         for index, source in enumerate(batch):
             item = parsed[index]
             fields = item.pop("_raw_fields", {})
             wrapped = bool(re.search(
-                rf"\\[{re.escape(source['id'])}\\].*?\\[/{re.escape(source['id'])}\\]",
+                rf"\[{re.escape(source['id'])}\].*?\[/{re.escape(source['id'])}\]",
                 content, re.IGNORECASE | re.DOTALL,
             ))
             action = normalized(item["action"])
@@ -610,7 +610,7 @@ class LlamaCppProvider(LLMProvider):
 
         # Validate across batches as well as within each batch.
         def canonical(value: str) -> str:
-            return re.sub(r"\\s+", " ", re.sub(r"[^\\w\\s]", "", value.casefold())).strip()
+            return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", value.casefold())).strip()
 
         seen_actions: dict[str, str] = {}
         seen_narrations: dict[str, str] = {}
