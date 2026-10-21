@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     pixabay_api_key: str = ""
 
     # Image routing: auto | local | local_fast | local_quality | local_next | openai
-    image_provider: str = "auto"
+    image_provider: str = "local_next"
 
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
@@ -112,12 +112,12 @@ class Settings(BaseSettings):
     sd_cpp_clip_on_cpu: bool = True
 
     # Conservative local render sizes for a 6 GB GPU.
-    sd_cpp_width_16_9: int = 1024
-    sd_cpp_height_16_9: int = 576
-    sd_cpp_width_9_16: int = 576
-    sd_cpp_height_9_16: int = 1024
-    sd_cpp_width_1_1: int = 768
-    sd_cpp_height_1_1: int = 768
+    sd_cpp_width_16_9: int = 1920
+    sd_cpp_height_16_9: int = 1088
+    sd_cpp_width_9_16: int = 1088
+    sd_cpp_height_9_16: int = 1920
+    sd_cpp_width_1_1: int = 1024
+    sd_cpp_height_1_1: int = 1024
 
     # Motion / image-to-video routing.
     # openmontage: use OpenMontage VideoSelector and its provider registry.
