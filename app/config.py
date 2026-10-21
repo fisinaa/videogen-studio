@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     sd_cpp_threads: int = 14
     sd_cpp_diffusion_fa: bool = True
     sd_cpp_offload_to_cpu: bool = True
+    # Conservative until RTX3060 benchmark verifies GPU residency.
     sd_cpp_verbose: bool = True
 
     # Local FAST profile (FLUX.1-schnell Q2_K)
