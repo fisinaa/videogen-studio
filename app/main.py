@@ -750,21 +750,60 @@ async def generate_scene_motion(
         "prompt": prompt,
     }
     try:
-        async with model_orchestrator.local_motion_slot():
-            result = await _run_montage(settings.motion_openmontage_runner, "generate", job)
+        if provider == "local_camera":
+            # Local fallback: camera motion over the still frame, NOT generated
+            # character animation. Requires ffmpeg but no cloud video provider.
+            duration = max(1.0, float(job["duration"]))
+            command = [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-loop", "1", "-framerate", "24",
+                "-i", str(reference_path),
+                "-vf", ("scale=960:540:force_original_aspect_ratio=increase,"
+                        "crop=960:540,"
+                        "zoompan=z='min(zoom+0.00035,1.08)':d=1:"
+                        "x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':"
+                        "s=960x540:fps=24,format=yuv420p"),
+                "-t", str(duration),
+                "-an", "-c:v", "libx264", "-preset", "veryfast",
+                "-crf", "23", "-movflags", "+faststart", str(output),
+            ]
+            process = await asyncio.create_subprocess_exec(
+                *command, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                _, stderr = await asyncio.wait_for(
+                    process.communicate(), timeout=settings.motion_timeout_seconds
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.communicate()
+                raise ValueError("Local camera motion timed out")
+            if process.returncode != 0:
+                raise ValueError(
+                    "Local camera FFmpeg error: "
+                    + stderr.decode("utf-8", errors="replace")[-1000:]
+                )
+            result = {"success": True, "selected_provider": "local_camera",
+                      "note": "Camera zoom only; character remains a still image"}
+        else:
+            async with model_orchestrator.local_motion_slot():
+                result = await _run_montage(settings.motion_openmontage_runner, "generate", job)
         if not output.is_file() or output.stat().st_size == 0:
-            raise ValueError("OpenMontage returned success without an output MP4")
+            raise ValueError("Video provider returned success without an output MP4")
     except Exception as exc:
         output.unlink(missing_ok=True)
         raise HTTPException(status_code=502, detail=f"OpenMontage motion failed: {_error_detail(exc)}") from exc
     relative_url = f"/api/projects/{project_id}/media/{output.name}"
     clip = MediaAsset(
-        provider=f"openmontage:{result.get('selected_provider') or provider}",
+        provider=("local_camera" if provider == "local_camera"
+                  else f"openmontage:{result.get('selected_provider') or provider}"),
         asset_id=output.name, media_type="video",
         preview_url=relative_url, source_url=relative_url, download_url=relative_url,
         local_path=f"media/{output.name}",
         duration_seconds=job["duration"],
-        label=f"Animated {scene.id} via OpenMontage",
+        label=(f"Camera movement {scene.id} (FFmpeg)" if provider == "local_camera"
+               else f"Animated {scene.id} via OpenMontage"),
     )
     scene.motion_candidates.append(clip)
     scene.selected_motion_media = clip
