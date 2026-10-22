@@ -155,6 +155,8 @@ class Project(BaseModel):
     request: CreateProjectRequest
     storyboard: Storyboard
     name: str = ""
+    music_file: str = ""
+    ambience_file: str = ""
     character_reference: MediaAsset | None = None
     character_reference_name: str = ""
     character_reference_prompt: str = ""
