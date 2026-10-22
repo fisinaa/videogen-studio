@@ -1,3 +1,6 @@
+import asyncio
+import os
+import sys
 import base64
 import io
 import json
@@ -667,6 +670,107 @@ async def review_all_images(project_id: str):
         except Exception as exc:
             errors.append({"scene_id": scene.id, "error": _error_detail(exc)})
     return {"project": project, "checked": checked, "skipped": skipped, "errors": errors}
+
+
+async def _run_montage(runner: Path, action: str, job: dict | None = None) -> dict:
+    if not runner.is_file():
+        raise ValueError(f"OpenMontage runner not found: {runner}")
+    python_bin = settings.openmontage_python
+    if not python_bin.is_file():
+        raise ValueError(f"OpenMontage Python is missing: {python_bin}")
+    env = os.environ.copy()
+    env["OPENMONTAGE_ROOT"] = str(settings.openmontage_root)
+    cmd = [str(python_bin), str(runner), action]
+    if job is not None:
+        cmd.append(json.dumps(job, ensure_ascii=False))
+    process = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(), timeout=settings.openmontage_timeout_seconds
+        )
+    except asyncio.TimeoutError as exc:
+        process.kill()
+        await process.communicate()
+        raise ValueError("OpenMontage operation timed out") from exc
+    output = stdout.decode("utf-8", errors="replace").strip()
+    error = stderr.decode("utf-8", errors="replace").strip()
+    try:
+        result = json.loads(output.splitlines()[-1]) if output else {}
+    except (ValueError, IndexError):
+        result = {}
+    if process.returncode != 0 or result.get("success") is False:
+        raise ValueError(str(result.get("error") or error[-1200:] or output[-1200:] or "OpenMontage failed"))
+    if not result and action != "status":
+        raise ValueError(f"OpenMontage returned no result: {error[-700:]}")
+    return result
+
+
+@app.get("/api/openmontage/status")
+async def openmontage_status():
+    results = {}
+    for name, runner in (("motion", settings.motion_openmontage_runner),
+                         ("render", settings.videogen_openmontage_runner)):
+        try:
+            results[name] = await _run_montage(runner, "status")
+        except Exception as exc:
+            results[name] = {"success": False, "error": _error_detail(exc)}
+    return results
+
+
+@app.post("/api/projects/{project_id}/scenes/{scene_id}/motion/generate")
+async def generate_scene_motion(
+    project_id: str, scene_id: str,
+    provider: str = Query(default="auto", max_length=80, pattern=r"^[a-zA-Z0-9_-]+$"),
+):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    scene = next((scene for scene in project.storyboard.scenes if scene.id == scene_id), None)
+    if scene is None:
+        raise HTTPException(status_code=404, detail="Scene not found")
+    if not scene.selected_media or not scene.selected_media.local_path:
+        raise HTTPException(status_code=400, detail="Select a locally saved scene image first")
+    reference_path = project_store.media_file(project_id, Path(scene.selected_media.local_path).name)
+    if reference_path is None:
+        raise HTTPException(status_code=404, detail="Selected image file is missing")
+    output = project_store.media_dir(project_id) / f"{scene.id}-motion-{uuid4().hex[:10]}.mp4"
+    prompt = scene.motion_prompt_en or (
+        f"Animate this still image naturally: {scene.action}. "
+        "Keep character appearance, clothing, setting and camera continuity; no morphing."
+    )
+    job = {
+        "reference_image_path": str(reference_path.resolve()),
+        "output_path": str(output.resolve()),
+        "duration": min(float(scene.duration_seconds), float(settings.motion_max_duration_seconds)),
+        "preferred_provider": provider,
+        "aspect_ratio": project.request.aspect_ratio,
+        "prompt": prompt,
+    }
+    try:
+        async with model_orchestrator.local_motion_slot():
+            result = await _run_montage(settings.motion_openmontage_runner, "generate", job)
+        if not output.is_file() or output.stat().st_size == 0:
+            raise ValueError("OpenMontage returned success without an output MP4")
+    except Exception as exc:
+        output.unlink(missing_ok=True)
+        raise HTTPException(status_code=502, detail=f"OpenMontage motion failed: {_error_detail(exc)}") from exc
+    relative_url = f"/api/projects/{project_id}/media/{output.name}"
+    clip = MediaAsset(
+        provider=f"openmontage:{result.get('selected_provider') or provider}",
+        asset_id=output.name, media_type="video",
+        preview_url=relative_url, source_url=relative_url, download_url=relative_url,
+        local_path=f"media/{output.name}",
+        duration_seconds=job["duration"],
+        label=f"Animated {scene.id} via OpenMontage",
+    )
+    scene.motion_candidates.append(clip)
+    scene.selected_motion_media = clip
+    scene.motion_mode = "image_to_video"
+    project_store.save(project)
+    return {"project": project, "result": result}
 
 
 @app.post("/api/projects/{project_id}/scenes/{scene_id}/media/select")
