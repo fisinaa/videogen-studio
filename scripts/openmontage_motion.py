@@ -172,7 +172,17 @@ def status() -> int:
         })
 
     available = [item for item in providers if item["status"] == "available"]
-    _json({"success": True, "available": available, "providers": providers})
+    _json({
+        "success": True,
+        "available": available,
+        "providers": providers,
+        "message": (
+            "No image-to-video providers are available. Configure an OpenMontage "
+            "video provider and its API credentials; OpenMontage/HyperFrames "
+            "rendering still works with static images."
+            if not available else f"{len(available)} image-to-video provider(s) available"
+        ),
+    })
     return 0
 
 
@@ -206,6 +216,27 @@ def generate(job: dict) -> int:
     # is too large. Auto deliberately keeps the full provider pool.
     if preferred_provider != "auto":
         inputs["allowed_providers"] = [preferred_provider]
+
+    # Diagnose unavailable video providers BEFORE invoking the selector.
+    from tools.tool_registry import registry
+    registry.ensure_discovered()
+    candidates = []
+    for tool in registry.get_by_capability("video_generation"):
+        if tool.name == "video_selector" or "image_to_video" not in list(getattr(tool, "capabilities", []) or []):
+            continue
+        candidates.append({
+            "name": tool.name,
+            "provider": str(getattr(tool, "provider", "unknown")),
+            "status": _status_value(tool),
+        })
+    if not any(item["status"] == "available" for item in candidates):
+        _json({
+            "success": False,
+            "error": "No image-to-video provider available in OpenMontage. "
+                     "Rendering still images with HyperFrames does not require one.",
+            "providers": candidates,
+        })
+        return 2
 
     result = VideoSelector().execute(inputs)
     payload = {
