@@ -436,6 +436,7 @@ class LlamaCppProvider(LLMProvider):
             f"Target length: {request.duration_seconds} seconds.\n"
             "Write the coherent full story BEFORE splitting into shots."
         )
+        _storyboard_debug("STORY", f"planning full story target_scenes={target_count}")
         story_text = await self._chat(
             [{"role": "system", "content": STORY_SYSTEM_PROMPT},
              {"role": "user", "content": story_prompt}],
@@ -447,6 +448,7 @@ class LlamaCppProvider(LLMProvider):
             if sep and key.strip().upper() in {"TITLE", "LOGLINE", "STYLE", "CHARACTER", "STORY"}:
                 story_fields[key.strip().upper()] = value.strip()
         story = story_fields.get("STORY", "")
+        _storyboard_debug("STORY", f"parsed words={len(story.split())}, character_present={bool(story_fields.get('CHARACTER'))}")
         if len(story.split()) < 55 or not story_fields.get("CHARACTER"):
             raise ValueError("LLM failed to produce a complete story and immutable character description")
         beats_prompt = (
@@ -474,6 +476,7 @@ class LlamaCppProvider(LLMProvider):
                 temperature=0.3 + 0.1 * attempt,
             )
             beats = extract_beats(response)
+            _storyboard_debug("BEATS", f"attempt={attempt+1} parsed={len(beats)}/{target_count}")
             normalized = [re.sub(r"\W+", "", event.casefold()) for _, event in beats]
             if len(beats) == target_count and len(set(normalized)) == target_count:
                 break
@@ -498,6 +501,7 @@ class LlamaCppProvider(LLMProvider):
     async def _expand_scene(self, request: CreateProjectRequest, outline: dict,
                             index: int, completed: list[dict]) -> dict:
         source = outline["scenes"][index]
+        _storyboard_debug("SCENE", f"{source['id']} starting title={source['title']!r} beat={source['beat']!r}")
         prev = outline["scenes"][index - 1]["beat"] if index else "NONE"
         nxt = (outline["scenes"][index + 1]["beat"]
                if index + 1 < len(outline["scenes"]) else "NONE")
@@ -528,6 +532,7 @@ class LlamaCppProvider(LLMProvider):
             )
             fields = _extract_block_fields(answer, source["id"])
             action, narration = fields.get("ACTION", ""), fields.get("NARRATION", "")
+            _storyboard_debug("NARRATIVE", f"{source['id']} attempt={attempt+1} fields={sorted(fields)} duplicate_action={normal(action) in used_actions} duplicate_narration={normal(narration) in used_narrations}")
             if (action.strip() and narration.strip()
                     and normal(action) not in used_actions
                     and normal(narration) not in used_narrations):
@@ -550,10 +555,12 @@ class LlamaCppProvider(LLMProvider):
                 max_tokens=1050, temperature=0.3 + 0.1 * attempt,
             )
             visual_fields = _extract_block_fields(visual_answer, source["id"])
+            _storyboard_debug("VISUAL", f"{source['id']} attempt={attempt+1} fields={sorted(visual_fields)} en_len={len(visual_fields.get('VISUAL_EN', ''))} ru_len={len(visual_fields.get('VISUAL_RU', ''))}")
             if visual_fields.get("VISUAL_EN", "").strip() and visual_fields.get("VISUAL_RU", "").strip():
                 break
         else:
-            raise ValueError(f"{source['id']}: image prompt generation incomplete")
+            raise ValueError(f"{source['id']}: image prompt generation incomplete; fields={sorted(visual_fields)}; missing={[ key for key in ('VISUAL_EN', 'VISUAL_RU') if not visual_fields.get(key, '').strip()]}")
+        _storyboard_debug("SCENE", f"{source['id']} completed")
         dialogue_raw = narrative.get("DIALOGUE", "")
         return {
             "id": source["id"],
