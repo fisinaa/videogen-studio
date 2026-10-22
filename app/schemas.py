@@ -101,7 +101,8 @@ class Scene(BaseModel):
     negative_prompt_en: str = ""
     media_search_query: str = ""
     reference_keys: list[str] = Field(default_factory=list)
-    image_review: dict | None = None\n    selected_media: MediaAsset | None = None
+    image_review: dict | None = None
+    selected_media: MediaAsset | None = None
     media_candidates: list[MediaAsset] = Field(default_factory=list)
     selected_audio: AudioAsset | None = None
     audio_duration_seconds: float | None = None
