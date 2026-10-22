@@ -1,3 +1,10 @@
+import base64
+import io
+import json
+import re
+
+import httpx
+from PIL import Image
 from pathlib import Path
 from uuid import uuid4
 
@@ -505,6 +512,118 @@ async def generate_project_images_batch(
         await run_all()
 
     return {"project": project, "generated": ok, "errors": errors}
+
+
+async def _review_image(project: Project, scene) -> dict:
+    asset = scene.selected_media
+    if asset is None or not asset.local_path:
+        raise ValueError("У сцены нет выбранного локального изображения")
+    path = project_store.media_file(project.id, Path(asset.local_path).name)
+    if path is None:
+        raise ValueError("Файл выбранного изображения не найден")
+    if not settings.llm_quality_mmproj.is_file():
+        raise ValueError("LLM_QUALITY_MMPROJ не настроен или файл mmproj отсутствует")
+    with Image.open(path) as original:
+        image = original.convert("RGB")
+        image.thumbnail((1024, 1024))
+        output = io.BytesIO()
+        image.save(output, format="JPEG", quality=83)
+    image_data = base64.b64encode(output.getvalue()).decode("ascii")
+    instructions = (
+        "Inspect the actual image, not just the text. You are a strict but fair "
+        "quality reviewer for an animated film. Compare the image to the requested "
+        "scene, visible action, and canonical protagonist appearance. "
+        "Do not claim to see things that are not visible. "
+        "Return ONLY a JSON object: "
+        '{"score": integer 0-10, "verdict": "pass" or "review", '
+        '"character": "short Russian explanation", '
+        '"action": "short Russian explanation", '
+        '"issues": ["short Russian issue"], '
+        '"recommendation": "short Russian improvement"}. '
+        "When no reference image is supplied, do not confidently claim character "
+        "identity consistency: compare against the written canonical description."
+    )
+    context = (
+        f"SCENE ID: {scene.id}\\nTITLE: {scene.title}\\n"
+        f"EXPECTED ACTION: {scene.action}\\n"
+        f"EXPECTED VISUAL: {scene.visual_prompt_ru or scene.visual_prompt_en or scene.visual_prompt}\\n"
+        f"CANONICAL CHARACTER: {'; '.join(project.storyboard.characters)}\\n"
+        f"STYLE: {project.storyboard.visual_style}"
+    )
+    payload = {
+        "model": settings.llm_model,
+        "temperature": 0.2,
+        "max_tokens": 600,
+        "messages": [
+            {"role": "system", "content": instructions},
+            {"role": "user", "content": [
+                {"type": "text", "text": context},
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + image_data}},
+            ]},
+        ],
+    }
+    if settings.llm_disable_thinking:
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+    async with model_orchestrator.llm_slot(profile="quality"):
+        async with httpx.AsyncClient(timeout=httpx.Timeout(settings.llm_timeout_seconds)) as client:
+            response = await client.post(
+                settings.llm_base_url.rstrip("/") + "/chat/completions",
+                json=payload,
+                headers={"Authorization": f"Bearer {settings.llm_api_key}"},
+            )
+            response.raise_for_status()
+        content = response.json()["choices"][0]["message"].get("content") or ""
+    match = re.search(r"\\{[\\s\\S]*\\}", content)
+    if not match:
+        raise ValueError("Модель не вернула JSON-оценку изображения")
+    try:
+        review = json.loads(match.group(0))
+    except json.JSONDecodeError as exc:
+        raise ValueError("Невалидный JSON от модели проверки изображения") from exc
+    score = review.get("score")
+    if not isinstance(score, int) or not 0 <= score <= 10:
+        raise ValueError("Некорректная оценка AI, ожидалось целое число 0-10")
+    review["verdict"] = "pass" if score >= 8 and not review.get("issues") else "review"
+    review["asset_id"] = asset.asset_id
+    return review
+
+
+@app.post("/api/projects/{project_id}/scenes/{scene_id}/image-review")
+async def review_scene_image(project_id: str, scene_id: str):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    for index, scene in enumerate(project.storyboard.scenes):
+        if scene.id == scene_id:
+            try:
+                review = await _review_image(project, scene)
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail=_error_detail(exc)) from exc
+            project.storyboard.scenes[index].image_review = review
+            project_store.save(project)
+            return {"review": review, "project": project}
+    raise HTTPException(status_code=404, detail="Scene not found")
+
+
+@app.post("/api/projects/{project_id}/image-reviews/run-all")
+async def review_all_images(project_id: str):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    checked = 0
+    skipped = []
+    errors = []
+    for scene in project.storyboard.scenes:
+        if not scene.selected_media:
+            skipped.append(scene.id)
+            continue
+        try:
+            scene.image_review = await _review_image(project, scene)
+            checked += 1
+            project_store.save(project)
+        except Exception as exc:
+            errors.append({"scene_id": scene.id, "error": _error_detail(exc)})
+    return {"project": project, "checked": checked, "skipped": skipped, "errors": errors}
 
 
 @app.post("/api/projects/{project_id}/scenes/{scene_id}/media/select")
