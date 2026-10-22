@@ -34,12 +34,23 @@ async def main() -> None:
             run("ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                 "-f", "lavfi", "-i", f"sine=frequency={freq}:duration=0.8",
                 str(output))
+        # Exercise narration, background music and ambience in the same mix.
+        music = path / "music.wav"
+        ambience = path / "ambience.wav"
+        for frequency, destination in ((190, music), (95, ambience)):
+            run("ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "lavfi", "-i", f"sine=frequency={frequency}:duration=1.0",
+                str(destination))
         await finish_render(
             video,
             [(str(voice1), 0, 2, "scene-001"),
              (str(voice2), 2, 2, "scene-002")],
             boundaries=[2.0],
             fade_seconds=0.34,
+            music_file=music,
+            ambience_file=ambience,
+            music_volume=0.15,
+            ambience_volume=0.18,
         )
         probe = subprocess.check_output([
             "ffprobe", "-v", "error",
@@ -51,7 +62,7 @@ async def main() -> None:
         duration = float(info["format"]["duration"])
         if types != {"video", "audio"} or not 3.8 <= duration <= 4.2:
             raise AssertionError(f"Unexpected streams/duration: {info}")
-        print(f"OK: video + audio, duration={duration:.2f}s, fades + narration passed")
+        print(f"OK: video + audio, duration={duration:.2f}s, fades + narration + music + ambience passed")
 
 
 if __name__ == "__main__":
