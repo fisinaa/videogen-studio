@@ -42,7 +42,7 @@ class ModelOrchestrator:
                 "profile": "quality",
                 "model_name": settings.llm_quality_model_name,
                 "model_path": settings.llm_quality_model_path,
-                "args": settings.llm_quality_args,
+                "args": settings.llm_quality_args + (f" --mmproj {settings.llm_quality_mmproj}" if str(settings.llm_quality_mmproj) not in {"", "."} else ""),
             }
         return {
             "profile": "fast",
