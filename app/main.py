@@ -11,7 +11,7 @@ from PIL import Image
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, File, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from httpx import HTTPError
@@ -844,12 +844,86 @@ async def get_project_render(project_id: str, filename: str):
     return FileResponse(path, media_type="video/mp4")
 
 
+@app.get("/api/projects/{project_id}/audio/status")
+async def project_audio_status(project_id: str):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    ready, missing = [], []
+    for scene in project.storyboard.scenes:
+        asset = scene.selected_audio
+        filename = Path(asset.local_path).name if asset and asset.local_path else ""
+        file = project_store.audio_file(project_id, filename) if filename else None
+        if file is not None and file.stat().st_size > 0:
+            ready.append(scene.id)
+        elif _scene_speech_text(scene):
+            missing.append(scene.id)
+    return {"ready": ready, "missing": missing,
+            "music_file": project.music_file, "ambience_file": project.ambience_file}
+
+
+@app.post("/api/projects/{project_id}/soundtrack/{kind}")
+async def upload_soundtrack(project_id: str, kind: str, file: UploadFile = File(...)):
+    if kind not in {"music", "ambience"}:
+        raise HTTPException(status_code=400, detail="Use music or ambience")
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    extension = Path(file.filename or "").suffix.lower()
+    if extension not in {".mp3", ".wav", ".flac", ".ogg", ".m4a"}:
+        raise HTTPException(status_code=400, detail="Supported audio: mp3, wav, flac, ogg, m4a")
+    filename = f"{kind}-{uuid4().hex[:10]}{extension}"
+    dest = project_store.audio_dir(project_id) / filename
+    total = 0
+    try:
+        with dest.open("wb") as out:
+            while chunk := await file.read(1024 * 1024):
+                total += len(chunk)
+                if total > 100 * 1024 * 1024:
+                    raise ValueError("Audio file exceeds 100 MB")
+                out.write(chunk)
+        if not total:
+            raise ValueError("Empty audio file")
+        from app.services.render_finish import media_streams
+        if "audio" not in await media_streams(dest):
+            raise ValueError("Uploaded file contains no audio stream")
+    except Exception as exc:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"Invalid audio: {_error_detail(exc)}") from exc
+    finally:
+        await file.close()
+    if kind == "music":
+        project.music_file = filename
+    else:
+        project.ambience_file = filename
+    project_store.save(project)
+    return {"project": project, "filename": filename,
+            "url": f"/api/projects/{project_id}/audio/{filename}"}
+
+
+@app.delete("/api/projects/{project_id}/soundtrack/{kind}")
+async def clear_soundtrack(project_id: str, kind: str):
+    if kind not in {"music", "ambience"}:
+        raise HTTPException(status_code=400, detail="Use music or ambience")
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if kind == "music":
+        project.music_file = ""
+    else:
+        project.ambience_file = ""
+    project_store.save(project)
+    return {"project": project}
+
+
 @app.post("/api/projects/{project_id}/openmontage/render")
 async def render_project_openmontage(
     project_id: str,
     runtime: str = Query(default="hyperframes", pattern="^(hyperframes|remotion)$"),
     include_narration: bool = True,
     smooth_transitions: bool = True,
+    music_volume: float = Query(default=0.15, ge=0, le=1),
+    ambience_volume: float = Query(default=0.18, ge=0, le=1),
 ):
     project = project_store.load(project_id)
     if project is None:
@@ -884,6 +958,24 @@ async def render_project_openmontage(
                 if audio_path is not None:
                     narration_tracks.append((str(audio_path.resolve()), cursor, length, scene.id))
         cursor += length
+    if include_narration:
+        expected = [scene.id for scene in project.storyboard.scenes if _scene_speech_text(scene)]
+        present = {track[3] for track in narration_tracks}
+        missing = [scene_id for scene_id in expected if scene_id not in present]
+        if missing:
+            raise HTTPException(
+                status_code=409,
+                detail=("Нет готовой озвучки у сцен: " + ", ".join(missing)
+                        + ". Нажми «Озвучить отсутствующие» или отключи «Озвучка в MP4»."),
+            )
+    music_path = (project_store.audio_file(project_id, project.music_file)
+                  if project.music_file else None)
+    ambience_path = (project_store.audio_file(project_id, project.ambience_file)
+                     if project.ambience_file else None)
+    if project.music_file and music_path is None:
+        raise HTTPException(status_code=409, detail="Music file is missing; upload again")
+    if project.ambience_file and ambience_path is None:
+        raise HTTPException(status_code=409, detail="Ambience file is missing; upload again")
     output = project_store.render_dir(project_id) / f"{project_id}-{runtime}-{uuid4().hex[:8]}.mp4"
     job = {
         "runtime": runtime,
@@ -899,13 +991,14 @@ async def render_project_openmontage(
         result = await _run_montage(settings.videogen_openmontage_runner, "render", job)
         if not output.is_file() or output.stat().st_size == 0:
             raise ValueError("OpenMontage returned no usable MP4")
-        if narration_tracks or smooth_transitions:
-            from app.services.render_finish import finish_render
-            await finish_render(
-                output, narration_tracks,
-                boundaries=[float(cut["out_seconds"]) for cut in cuts[:-1]],
-                fade_seconds=0.34 if smooth_transitions else 0.0,
-            )
+        from app.services.render_finish import finish_render
+        audio_result = await finish_render(
+            output, narration_tracks,
+            boundaries=[float(cut["out_seconds"]) for cut in cuts[:-1]],
+            fade_seconds=0.34 if smooth_transitions else 0.0,
+            music_file=music_path, ambience_file=ambience_path,
+            music_volume=music_volume, ambience_volume=ambience_volume,
+        )
     except Exception as exc:
         output.unlink(missing_ok=True)
         raise HTTPException(
@@ -917,6 +1010,7 @@ async def render_project_openmontage(
         "video_url": f"/api/projects/{project_id}/renders/{output.name}",
         "filename": output.name,
         "narration_tracks": len(narration_tracks),
+        "audio": audio_result,
         "smooth_transitions": smooth_transitions,
         "camera_movements": {cut["id"]: cut["animation"] for cut in cuts},
         "result": result,
