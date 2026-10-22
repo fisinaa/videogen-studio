@@ -124,6 +124,22 @@ def _error_detail(exc: Exception) -> str:
     return detail or exc.__class__.__name__
 
 
+def _camera_animation(scene, index: int, count: int) -> str:
+    chosen = scene.camera_movement or "auto"
+    if chosen != "auto":
+        return chosen
+    content = f"{scene.title} {scene.action} {scene.narration}".casefold()
+    if index == count - 1 or any(word in content for word in ("закат", "финал", "покой", "заводь", "horizon", "sunset", "arrival")):
+        return "zoom-out"
+    if any(word in content for word in ("мч", "ускор", "течени", "прорыв", "порог", "круж", "скорост", "брызг", "rapid", "speed", "rush", "current")):
+        return "pan-right" if index % 2 else "pan-left"
+    if any(word in content for word in ("ветер", "порыв", "вылет", "gust", "wind", "storm")):
+        return "drift-up"
+    if any(word in content for word in ("спокой", "тихо", "отдых", "reflection", "calm", "rest")):
+        return "drift-down"
+    return ("zoom-in", "pan-left", "drift-up", "pan-right")[index % 4]
+
+
 def _scene_speech_text(scene) -> str:
     narration = scene.narration.strip()
     if narration:
@@ -362,6 +378,7 @@ async def update_scene(project_id: str, scene_id: str, payload: SceneUpdate):
                 "visual_prompt_en": scene.visual_prompt_en if payload.visual_prompt_en is None else payload.visual_prompt_en,
                 "negative_prompt_en": scene.negative_prompt_en if payload.negative_prompt_en is None else payload.negative_prompt_en,
                 "media_search_query": payload.media_search_query,
+                "camera_movement": scene.camera_movement if payload.camera_movement is None else payload.camera_movement,
                 "selected_audio": None if speech_changed else scene.selected_audio,
             }
         )
@@ -831,6 +848,8 @@ async def get_project_render(project_id: str, filename: str):
 async def render_project_openmontage(
     project_id: str,
     runtime: str = Query(default="hyperframes", pattern="^(hyperframes|remotion)$"),
+    include_narration: bool = True,
+    smooth_transitions: bool = True,
 ):
     project = project_store.load(project_id)
     if project is None:
@@ -838,7 +857,8 @@ async def render_project_openmontage(
     cuts = []
     assets = []
     cursor = 0.0
-    for scene in project.storyboard.scenes:
+    narration_tracks = []
+    for index, scene in enumerate(project.storyboard.scenes):
         chosen = scene.selected_motion_media or scene.selected_media
         if not chosen or not chosen.local_path:
             raise HTTPException(status_code=400, detail=f"{scene.id} has no chosen media")
@@ -853,9 +873,16 @@ async def render_project_openmontage(
             "in_seconds": cursor,
             "out_seconds": cursor + length,
             "subtitle": scene.subtitle_text or scene.narration if scene.subtitle_enabled else "",
-            "animation": "ken-burns" if chosen.media_type == "image" else "static",
+            "animation": (_camera_animation(scene, index, len(project.storyboard.scenes))
+                          if chosen.media_type == "image" else "static"),
         })
         assets.append({"id": scene.id, "path": source, "type": chosen.media_type})
+        if include_narration and scene.selected_audio:
+            name = Path(scene.selected_audio.local_path or "").name
+            if name:
+                audio_path = project_store.audio_file(project_id, name)
+                if audio_path is not None:
+                    narration_tracks.append((str(audio_path.resolve()), cursor, length, scene.id))
         cursor += length
     output = project_store.render_dir(project_id) / f"{project_id}-{runtime}-{uuid4().hex[:8]}.mp4"
     job = {
@@ -872,6 +899,13 @@ async def render_project_openmontage(
         result = await _run_montage(settings.videogen_openmontage_runner, "render", job)
         if not output.is_file() or output.stat().st_size == 0:
             raise ValueError("OpenMontage returned no usable MP4")
+        if narration_tracks or smooth_transitions:
+            from app.services.render_finish import finish_render
+            await finish_render(
+                output, narration_tracks,
+                boundaries=[float(cut["out_seconds"]) for cut in cuts[:-1]],
+                fade_seconds=0.34 if smooth_transitions else 0.0,
+            )
     except Exception as exc:
         output.unlink(missing_ok=True)
         raise HTTPException(
@@ -882,6 +916,9 @@ async def render_project_openmontage(
         "success": True,
         "video_url": f"/api/projects/{project_id}/renders/{output.name}",
         "filename": output.name,
+        "narration_tracks": len(narration_tracks),
+        "smooth_transitions": smooth_transitions,
+        "camera_movements": {cut["id"]: cut["animation"] for cut in cuts},
         "result": result,
     }
 
