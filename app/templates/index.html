@@ -165,8 +165,50 @@ async function reviewAllImages(){
   }catch(error){progress.innerHTML='<span class="error">'+esc(error.message)+'</span>'}
   finally{busy=false;const b=document.getElementById('review-all-images');if(b)b.disabled=false}
 }
-function bindSceneButtons(){document.querySelectorAll('.scene-editor').forEach(e=>{const cb=e.querySelector('.use-reference');cb.addEventListener('change',()=>cb.dataset.touched='1');e.querySelector('.save-scene').onclick=()=>saveScene(e);e.querySelector('.regen-scene').onclick=()=>regenerateScene(e);e.querySelector('.rebuild-prompt').onclick=()=>rebuildPrompt(e);e.querySelector('.search-media').onclick=()=>searchMedia(e);e.querySelector('.generate-quality')?.addEventListener('click',()=>{if(cb.dataset.touched==='0')cb.checked=false;generateImage(e,'local_quality')});e.querySelector('.generate-next')?.addEventListener('click',()=>{if(cb.dataset.touched==='0')cb.checked=false;generateImage(e,'local_next')});e.querySelector('.generate-openai').onclick=()=>{if(cb.dataset.touched==='0')cb.checked=!!currentProject.character_reference;generateImage(e,'openai')};e.querySelector('.review-image').onclick=()=>reviewOneImage(e);e.querySelector('.generate-audio').onclick=()=>generateAudio(e);bindGalleryButtons(e)})}
-function bindProjectButtons(){document.getElementById('prepare-all')?.addEventListener('click',prepareAll);document.getElementById('generate-character-reference')?.addEventListener('click',generateCharacterReference);document.getElementById('generate-all-fast')?.addEventListener('click',()=>generateAll('local_fast'));document.getElementById('generate-all-quality')?.addEventListener('click',()=>generateAll('local_quality'));document.getElementById('generate-all-next')?.addEventListener('click',()=>generateAll('local_next'));document.getElementById('generate-all-openai')?.addEventListener('click',()=>generateAll('openai'));document.getElementById('review-all-images')?.addEventListener('click',reviewAllImages);document.getElementById('generate-all-audio')?.addEventListener('click',generateAllAudio);document.getElementById('delete-project')?.addEventListener('click',()=>deleteProject(currentProject.id,currentProject.storyboard.title))}
+async function keyframeScene(e){
+ const id=e.dataset.sceneId,m=e.querySelector('.scene-message'),b=e.querySelector('.generate-keyframe');
+ if(busy||!currentProject)return;b.disabled=true;m.textContent='Подготавливаю ключевой кадр...';
+ try{await persistScene(e);const r=await fetch('/api/projects/'+currentProject.id+'/scenes/'+id+'/keyframe/generate',{method:'POST'}),d=await r.json();if(!r.ok)throw Error(d.detail||'Ошибка генерации');
+ currentProject=d;const scene=sceneById(d,id);
+ e.querySelector('.f-key-ru').value=scene.key_frame_prompt_ru||'';
+ e.querySelector('.f-key-en').value=scene.key_frame_prompt_en||'';
+ e.querySelector('.f-motion-en').value=scene.motion_prompt_en||'';
+ m.innerHTML='<span class="success">Ключевой кадр и анимация подготовлены.</span>';
+ }catch(err){m.innerHTML='<span class="error">'+esc(err.message)+'</span>'}
+ finally{b.disabled=false}
+}
+async function keyframesAll(){
+ if(busy||!currentProject)return;busy=true;const p=document.getElementById('bulk-progress');p.style.display='block';p.textContent='Подготавливаю ключевые кадры для всех сцен...';
+ try{const r=await fetch('/api/projects/'+currentProject.id+'/keyframes/generate-all',{method:'POST'}),d=await r.json();if(!r.ok)throw Error(d.detail||'Ошибка ключевых кадров');
+ renderProject(d.project);const out=document.getElementById('bulk-progress');out.style.display='block';out.textContent='Подготовлено '+d.generated+'; ошибок '+d.errors.length+(d.errors.length?' | '+d.errors.map(e=>e.scene_id+': '+e.error).join('; '):'');
+ }catch(err){p.innerHTML='<span class="error">'+esc(err.message)+'</span>'}finally{busy=false}
+}
+async function montageStatus(){
+ const p=document.getElementById('bulk-progress');p.style.display='block';p.textContent='Проверяю OpenMontage и доступные провайдеры...';
+ try{const r=await fetch('/api/openmontage/status'),d=await r.json();if(!r.ok)throw Error(d.detail||'Status failed');
+ p.textContent=JSON.stringify(d,null,2);p.style.whiteSpace='pre-wrap';
+ }catch(err){p.innerHTML='<span class="error">'+esc(err.message)+'</span>'}
+}
+async function animateScene(e){
+ if(busy||!currentProject)return;busy=true;
+ const id=e.dataset.sceneId,b=e.querySelector('.animate-scene'),m=e.querySelector('.scene-message');b.disabled=true;m.textContent='OpenMontage создаёт анимацию...';
+ try{await persistScene(e);
+ const r=await fetch('/api/projects/'+currentProject.id+'/scenes/'+id+'/motion/generate',{method:'POST'}),d=await r.json();
+ if(!r.ok)throw Error(d.detail||'Motion failed');currentProject=d.project;
+ e.querySelector('.motion-preview').innerHTML=motionPreviewHtml(sceneById(d.project,id));
+ m.innerHTML='<span class="success">Анимация готова, файл сохранён в проекте.</span>';
+ }catch(err){m.innerHTML='<span class="error">'+esc(err.message)+'</span>'}
+ finally{busy=false;b.disabled=false}
+}
+async function montageRender(runtime){
+ if(busy||!currentProject)return;busy=true;
+ const p=document.getElementById('bulk-progress');p.style.display='block';p.textContent='OpenMontage '+runtime+': собираю MP4...';
+ try{const r=await fetch('/api/projects/'+currentProject.id+'/openmontage/render?runtime='+encodeURIComponent(runtime),{method:'POST'}),d=await r.json();if(!r.ok)throw Error(d.detail||'Render failed');
+ p.innerHTML='<span class="success">Готово: </span><a target="_blank" rel="noopener" href="'+esc(d.video_url)+'">'+esc(d.filename)+'</a>';
+ }catch(err){p.innerHTML='<span class="error">'+esc(err.message)+'</span>'}finally{busy=false}
+}
+function bindSceneButtons(){document.querySelectorAll('.scene-editor').forEach(e=>{const cb=e.querySelector('.use-reference');cb.addEventListener('change',()=>cb.dataset.touched='1');e.querySelector('.save-scene').onclick=()=>saveScene(e);e.querySelector('.regen-scene').onclick=()=>regenerateScene(e);e.querySelector('.rebuild-prompt').onclick=()=>rebuildPrompt(e);e.querySelector('.search-media').onclick=()=>searchMedia(e);e.querySelector('.generate-quality')?.addEventListener('click',()=>{if(cb.dataset.touched==='0')cb.checked=false;generateImage(e,'local_quality')});e.querySelector('.generate-next')?.addEventListener('click',()=>{if(cb.dataset.touched==='0')cb.checked=false;generateImage(e,'local_next')});e.querySelector('.generate-openai').onclick=()=>{if(cb.dataset.touched==='0')cb.checked=!!currentProject.character_reference;generateImage(e,'openai')};e.querySelector('.generate-keyframe').onclick=()=>keyframeScene(e);e.querySelector('.animate-scene').onclick=()=>animateScene(e);e.querySelector('.review-image').onclick=()=>reviewOneImage(e);e.querySelector('.generate-audio').onclick=()=>generateAudio(e);bindGalleryButtons(e)})}
+function bindProjectButtons(){document.getElementById('prepare-all')?.addEventListener('click',prepareAll);document.getElementById('generate-character-reference')?.addEventListener('click',generateCharacterReference);document.getElementById('generate-all-fast')?.addEventListener('click',()=>generateAll('local_fast'));document.getElementById('generate-all-quality')?.addEventListener('click',()=>generateAll('local_quality'));document.getElementById('generate-all-next')?.addEventListener('click',()=>generateAll('local_next'));document.getElementById('generate-all-openai')?.addEventListener('click',()=>generateAll('openai'));document.getElementById('generate-all-keyframes')?.addEventListener('click',keyframesAll);document.getElementById('montage-status')?.addEventListener('click',montageStatus);document.getElementById('montage-render-hyperframes')?.addEventListener('click',()=>montageRender('hyperframes'));document.getElementById('montage-render-remotion')?.addEventListener('click',()=>montageRender('remotion'));document.getElementById('review-all-images')?.addEventListener('click',reviewAllImages);document.getElementById('generate-all-audio')?.addEventListener('click',generateAllAudio);document.getElementById('delete-project')?.addEventListener('click',()=>deleteProject(currentProject.id,currentProject.storyboard.title))}
 async function loadProject(id){if(!id)return;status.textContent=`Загружаю ${id}...`;try{const r=await fetch(`/api/projects/${encodeURIComponent(id)}`),d=await r.json();if(!r.ok)throw new Error(d.detail);renderProject(d);setUrl(d.id);active(d.id);status.textContent=`Проект загружен: ${d.storyboard.title}`}catch(x){status.innerHTML=`<span class="error">${esc(x.message)}</span>`}}
 document.querySelectorAll('.recent-project').forEach(x=>x.addEventListener('click',()=>loadProject(x.dataset.projectId)));
 document.querySelectorAll('.delete-project-list').forEach(b=>b.addEventListener('click',ev=>{ev.stopPropagation();deleteProject(b.dataset.projectId,b.dataset.projectTitle)}));
