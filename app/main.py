@@ -451,6 +451,46 @@ async def search_scene_media(
     return {"query": search_query, "providers": media_router.status(), "results": assets}
 
 
+@app.post("/api/projects/{project_id}/scenes/{scene_id}/keyframe/generate")
+async def generate_scene_keyframe(project_id: str, scene_id: str):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    for scene in project.storyboard.scenes:
+        if scene.id != scene_id:
+            continue
+        try:
+            with model_orchestrator.use_llm_profile(settings.llm_profile_visual_prompt):
+                prompts = await llm.build_key_frame(project.storyboard, scene)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Keyframe prompt failed: {_error_detail(exc)}") from exc
+        for key, value in prompts.items():
+            setattr(scene, key, value)
+        project_store.save(project)
+        return project
+    raise HTTPException(status_code=404, detail="Scene not found")
+
+
+@app.post("/api/projects/{project_id}/keyframes/generate-all")
+async def generate_all_keyframes(project_id: str):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    generated = 0
+    errors = []
+    with model_orchestrator.use_llm_profile(settings.llm_profile_visual_prompt):
+        for scene in project.storyboard.scenes:
+            try:
+                prompts = await llm.build_key_frame(project.storyboard, scene)
+                for key, value in prompts.items():
+                    setattr(scene, key, value)
+                generated += 1
+                project_store.save(project)
+            except Exception as exc:
+                errors.append({"scene_id": scene.id, "error": _error_detail(exc)})
+    return {"project": project, "generated": generated, "errors": errors}
+
+
 @app.post("/api/projects/{project_id}/scenes/{scene_id}/media/generate-ai")
 async def generate_scene_ai_media(
     project_id: str,
