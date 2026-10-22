@@ -680,6 +680,13 @@ async def _run_montage(runner: Path, action: str, job: dict | None = None) -> di
         raise ValueError(f"OpenMontage Python is missing: {python_bin}")
     env = os.environ.copy()
     env["OPENMONTAGE_ROOT"] = str(settings.openmontage_root)
+    # pydantic-settings reads VideoGen's .env but does not export it into the
+    # process environment. OpenMontage runs as a subprocess and needs credentials
+    # in its own environment to discover available video providers.
+    if settings.fal_key and not env.get("FAL_KEY"):
+        env["FAL_KEY"] = settings.fal_key
+    if settings.openai_api_key and not env.get("OPENAI_API_KEY"):
+        env["OPENAI_API_KEY"] = settings.openai_api_key
     cmd = [str(python_bin), str(runner), action]
     if job is not None:
         cmd.append(json.dumps(job, ensure_ascii=False))
