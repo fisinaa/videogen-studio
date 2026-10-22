@@ -168,8 +168,19 @@ def _hyperframes_compat_probe() -> dict:
 
     checks = payload.get("checks") or []
     failed = [c for c in checks if not c.get("ok", False)]
-    required_failed = [c for c in failed if "optional" not in str(c.get("detail", "")).lower()]
-    accepted = not required_failed
+    # HyperFrames doctor marks "newer version available" as a failed Version
+    # check. This is an advisory update notice, not a broken renderer.
+    advisory_failed = [
+        c for c in failed
+        if str(c.get("name", "")).lower() == "version"
+        and "available" in str(c.get("detail", "")).lower()
+    ]
+    required_failed = [
+        c for c in failed
+        if c not in advisory_failed
+        and "optional" not in str(c.get("detail", "")).lower()
+    ]
+    accepted = proc.returncode == 0 and not required_failed
     if accepted:
         HyperFramesCompose._cli_probe_cache = {"status": "ok"}
 
@@ -177,7 +188,11 @@ def _hyperframes_compat_probe() -> dict:
         "accepted": accepted,
         "doctor_exit_code": proc.returncode,
         "doctor_ok": bool(payload.get("ok")),
-        "optional_failures": [c.get("name") for c in failed if c not in required_failed],
+        "optional_failures": [c.get("name") for c in failed if c not in required_failed and c not in advisory_failed],
+        "advisories": [
+            {"name": c.get("name"), "detail": c.get("detail")}
+            for c in advisory_failed
+        ],
         "required_failures": [c.get("name") for c in required_failed],
         "version": (payload.get("_meta") or {}).get("version"),
         "package": HYPERFRAMES_NPX_PACKAGE,
