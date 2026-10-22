@@ -7,6 +7,7 @@ ProjectType = Literal["reel", "video", "cartoon", "series", "series_episode"]
 AspectRatio = Literal["9:16", "16:9", "1:1"]
 MediaType = Literal["video", "image"]
 MotionMode = Literal["static", "camera_motion", "image_to_video"]
+CameraMovement = Literal["auto", "ken-burns", "zoom-in", "zoom-out", "pan-left", "pan-right", "drift-up", "drift-down", "static"]
 ReferenceKind = Literal["character", "object", "location", "style"]
 LLMProfile = Literal["fast", "quality"]
 
@@ -112,6 +113,7 @@ class Scene(BaseModel):
     final_duration_seconds: float | None = None
     subtitle_text: str = ""
     subtitle_enabled: bool = True
+    camera_movement: CameraMovement = "auto"
     motion_mode: MotionMode = "camera_motion"
     motion_candidates: list[MediaAsset] = Field(default_factory=list)
     selected_motion_media: MediaAsset | None = None
@@ -133,6 +135,7 @@ class SceneUpdate(BaseModel):
     negative_prompt_en: str | None = Field(default=None, max_length=5000)
     media_search_query: str = Field(default="", max_length=1000)
     reference_keys: list[str] | None = None
+    camera_movement: CameraMovement | None = None
 
 
 class Storyboard(BaseModel):
