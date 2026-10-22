@@ -1,5 +1,7 @@
 import math
 import re
+import time
+from datetime import datetime, timezone
 
 import httpx
 from pydantic import ValidationError
@@ -157,6 +159,41 @@ the subject and stable traits, visible action, environment, key props and spatia
 relationships, camera/framing/composition, lighting, mood and visual style. Do not
 invent extra characters or text inside the image.
 """
+
+
+def _storyboard_debug(stage: str, message: str, response: str | None = None) -> None:
+    """Opt-in console and file diagnostics; never log credentials or request headers."""
+    if not settings.llm_debug_log:
+        return
+    stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    line = f"[{stamp}] [{stage}] {message}"
+    print("[VideoGen LLM] " + line, flush=True)
+    path = settings.llm_debug_log_path
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as file:
+            file.write(line + "\n")
+            if response is not None:
+                file.write("----- MODEL RESPONSE -----\n")
+                file.write(response[:12000] + "\n")
+                file.write("----- END RESPONSE -----\n")
+    except OSError as exc:
+        print(f"[VideoGen LLM] Could not write diagnostic file: {exc}", flush=True)
+
+
+def _llm_stage(messages: list[dict]) -> str:
+    system = str(messages[0].get("content", "")) if messages else ""
+    if system == STORY_SYSTEM_PROMPT:
+        return "STORY"
+    if system == BEATS_SYSTEM_PROMPT:
+        return "BEATS"
+    if system == NARRATIVE_SCENE_SYSTEM_PROMPT:
+        return "NARRATIVE"
+    if system == VISUAL_ONLY_SYSTEM_PROMPT:
+        return "VISUAL"
+    if system == SINGLE_SCENE_SYSTEM_PROMPT:
+        return "REWRITE"
+    return "LLM"
 
 
 def _scene_durations(total_seconds: int, scene_count: int) -> list[float]:
@@ -344,30 +381,51 @@ class LlamaCppProvider(LLMProvider):
         return headers
 
     async def _chat(self, messages: list[dict], max_tokens: int, temperature: float) -> str:
-        async with model_orchestrator.llm_slot():
-            await model_orchestrator.ensure_llm_running()
-            payload = {
-                "model": settings.llm_model,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-            }
-            if settings.llm_disable_thinking:
-                payload["chat_template_kwargs"] = {"enable_thinking": False}
-            timeout = httpx.Timeout(settings.llm_timeout_seconds)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(
-                    settings.llm_base_url.rstrip("/") + "/chat/completions",
-                    headers=self._headers(),
-                    json=payload,
+        stage = _llm_stage(messages)
+        started = time.monotonic()
+        _storyboard_debug(stage, f"request start max_tokens={max_tokens} temp={temperature}")
+        try:
+            async with model_orchestrator.llm_slot():
+                await model_orchestrator.ensure_llm_running()
+                payload = {
+                    "model": settings.llm_model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+                if settings.llm_disable_thinking:
+                    payload["chat_template_kwargs"] = {"enable_thinking": False}
+                timeout = httpx.Timeout(settings.llm_timeout_seconds)
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await client.post(
+                        settings.llm_base_url.rstrip("/") + "/chat/completions",
+                        headers=self._headers(),
+                        json=payload,
+                    )
+                    response.raise_for_status()
+                data = response.json()
+                message = data["choices"][0]["message"]
+                content = message.get("content") or ""
+                if not content.strip():
+                    raise ValueError("LLM returned empty content; check thinking mode and max_tokens")
+                finish_reason = data["choices"][0].get("finish_reason", "?")
+                usage = data.get("usage") or {}
+                _storyboard_debug(
+                    stage,
+                    f"success elapsed={time.monotonic()-started:.1f}s "
+                    f"finish_reason={finish_reason} "
+                    f"output_chars={len(content)} "
+                    f"completion_tokens={usage.get('completion_tokens', '?')}",
+                    response=content,
                 )
-                response.raise_for_status()
-            data = response.json()
-            message = data["choices"][0]["message"]
-            content = message.get("content") or ""
-            if not content.strip():
-                raise ValueError("LLM returned empty content; check thinking mode and max_tokens")
-            return content
+                return content
+        except Exception as exc:
+            _storyboard_debug(
+                stage,
+                f"ERROR elapsed={time.monotonic()-started:.1f}s "
+                f"exception={type(exc).__name__}: {str(exc)[:500]}",
+            )
+            raise
 
     async def _create_outline(self, request: CreateProjectRequest) -> dict:
         target_count = max(1, round(request.duration_seconds / 10))
