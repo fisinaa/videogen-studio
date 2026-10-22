@@ -150,7 +150,7 @@ def _ensure_visual_bible(project: Project) -> bool:
 
 def _image_prompt(project: Project, scene, use_reference: bool) -> tuple[str, Path | None]:
     reference_path = _character_reference_path(project) if use_reference else None
-    base_prompt = (scene.visual_prompt_en or scene.visual_prompt).strip()
+    base_prompt = (scene.key_frame_prompt_en or scene.visual_prompt_en or scene.visual_prompt).strip()
     if not base_prompt:
         raise ValueError("Scene visual prompt is empty")
 
@@ -352,6 +352,9 @@ async def update_scene(project_id: str, scene_id: str, payload: SceneUpdate):
                 "dialogue": payload.dialogue,
                 "action": payload.action,
                 "visual_prompt": payload.visual_prompt,
+                "key_frame_prompt_en": scene.key_frame_prompt_en if payload.key_frame_prompt_en is None else payload.key_frame_prompt_en,
+                "key_frame_prompt_ru": scene.key_frame_prompt_ru if payload.key_frame_prompt_ru is None else payload.key_frame_prompt_ru,
+                "motion_prompt_en": scene.motion_prompt_en if payload.motion_prompt_en is None else payload.motion_prompt_en,
                 "visual_prompt_ru": scene.visual_prompt_ru if payload.visual_prompt_ru is None else payload.visual_prompt_ru,
                 "visual_prompt_en": scene.visual_prompt_en if payload.visual_prompt_en is None else payload.visual_prompt_en,
                 "negative_prompt_en": scene.negative_prompt_en if payload.negative_prompt_en is None else payload.negative_prompt_en,
