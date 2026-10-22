@@ -544,10 +544,10 @@ async def _review_image(project: Project, scene) -> dict:
         "identity consistency: compare against the written canonical description."
     )
     context = (
-        f"SCENE ID: {scene.id}\\nTITLE: {scene.title}\\n"
-        f"EXPECTED ACTION: {scene.action}\\n"
-        f"EXPECTED VISUAL: {scene.visual_prompt_ru or scene.visual_prompt_en or scene.visual_prompt}\\n"
-        f"CANONICAL CHARACTER: {'; '.join(project.storyboard.characters)}\\n"
+        f"SCENE ID: {scene.id}\nTITLE: {scene.title}\n"
+        f"EXPECTED ACTION: {scene.action}\n"
+        f"EXPECTED VISUAL: {scene.visual_prompt_ru or scene.visual_prompt_en or scene.visual_prompt}\n"
+        f"CANONICAL CHARACTER: {'; '.join(project.storyboard.characters)}\n"
         f"STYLE: {project.storyboard.visual_style}"
     )
     payload = {
@@ -573,7 +573,7 @@ async def _review_image(project: Project, scene) -> dict:
             )
             response.raise_for_status()
         content = response.json()["choices"][0]["message"].get("content") or ""
-    match = re.search(r"\\{[\\s\\S]*\\}", content)
+    match = re.search(r"\{[\s\S]*\}", content)
     if not match:
         raise ValueError("Модель не вернула JSON-оценку изображения")
     try:
