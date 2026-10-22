@@ -797,6 +797,45 @@ class LlamaCppProvider(LLMProvider):
         }
         return Scene.model_validate(merged)
 
+    async def build_key_frame(self, storyboard: Storyboard, scene: Scene) -> dict[str, str]:
+        """Describe one still frame, separately from chronological scene motion."""
+        system = (
+            "You are an animation keyframe director. Reply with exactly three lines, no JSON or markdown:\n"
+            "KEYFRAME_RU: one concrete frozen instant in Russian\n"
+            "KEYFRAME_EN: the same single frozen instant in English, ready for FLUX.2\n"
+            "MOTION_EN: how to animate from that still image (camera, character and objects)\n"
+            "A still image cannot show multiple chronological actions. Choose one decisive moment. "
+            "Preserve character appearance and props exactly. No multiple poses, split screens or text."
+        )
+        context = (
+            f"Project: {storyboard.title}\n"
+            f"Canonical protagonist: {'; '.join(storyboard.characters)}\n"
+            f"Visual style: {storyboard.visual_style}\n"
+            f"Scene: {scene.id} - {scene.title}\n"
+            f"Scene action over time: {scene.action}\n"
+            f"Scene visual: {scene.visual_prompt_en or scene.visual_prompt}\n"
+            "Describe a SINGLE still moment and a SEPARATE motion direction."
+        )
+        for attempt in range(2):
+            answer = await self._chat(
+                [{"role": "system", "content": system}, {"role": "user", "content": context}],
+                max_tokens=800, temperature=0.25 + attempt * 0.1,
+            )
+            fields: dict[str, str] = {}
+            for line in answer.splitlines():
+                key, separator, value = line.partition(":")
+                key = key.strip().upper()
+                if separator and key in {"KEYFRAME_RU", "KEYFRAME_EN", "MOTION_EN"} and value.strip():
+                    fields[key] = value.strip()
+            _storyboard_debug("KEYFRAME", f"{scene.id} attempt={attempt+1} fields={sorted(fields)}")
+            if len(fields) == 3:
+                return {
+                    "key_frame_prompt_ru": fields["KEYFRAME_RU"],
+                    "key_frame_prompt_en": fields["KEYFRAME_EN"],
+                    "motion_prompt_en": fields["MOTION_EN"],
+                }
+        raise ValueError(f"{scene.id}: keyframe prompt incomplete after retries")
+
     async def create_storyboard(self, request: CreateProjectRequest) -> Storyboard:
         outline = await self._create_outline(request)
         outline_scenes = outline["scenes"]
