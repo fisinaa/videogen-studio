@@ -96,6 +96,9 @@ class Scene(BaseModel):
     dialogue: list[str] = Field(default_factory=list)
     action: str
     visual_prompt: str
+    key_frame_prompt_en: str = ""
+    key_frame_prompt_ru: str = ""
+    motion_prompt_en: str = ""
     visual_prompt_ru: str = ""
     visual_prompt_en: str = ""
     negative_prompt_en: str = ""
@@ -122,6 +125,9 @@ class SceneUpdate(BaseModel):
     dialogue: list[str] = Field(default_factory=list)
     action: str = Field(min_length=1, max_length=10000)
     visual_prompt: str = Field(min_length=1, max_length=10000)
+    key_frame_prompt_en: str | None = Field(default=None, max_length=10000)
+    key_frame_prompt_ru: str | None = Field(default=None, max_length=10000)
+    motion_prompt_en: str | None = Field(default=None, max_length=10000)
     visual_prompt_ru: str | None = Field(default=None, max_length=10000)
     visual_prompt_en: str | None = Field(default=None, max_length=10000)
     negative_prompt_en: str | None = Field(default=None, max_length=5000)
