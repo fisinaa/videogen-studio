@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     # reliably and provide a practical quality/speed balance for storyboard work.
     llm_quality_model_name: str = "Qwen3-14B-Q4_K_M"
     llm_quality_model_path: Path = Path("/home/faa/models/Qwen3-14B-Q4_K_M.gguf")
-    llm_quality_args: str = "--jinja -ngl 99 -c 8192 -fa on -t 10 -np 1"
+    llm_quality_mmproj: Path = Path("")  # Optional vision projector for Quality\n    llm_quality_args: str = "--jinja -ngl 99 -c 8192 -fa on -t 10 -np 1"
 
     llm_profile_default: str = "fast"
     llm_profile_storyboard: str = "quality"
