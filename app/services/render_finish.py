@@ -83,7 +83,7 @@ async def finish_render(
     if narration_tracks:
         command += ["-c:a", "aac", "-b:a", "192k"]
     command += [
-        "-movflags", "+faststart", "-shortest", str(temporary),
+        "-movflags", "+faststart", str(temporary),
     ]
     try:
         process = await asyncio.create_subprocess_exec(
