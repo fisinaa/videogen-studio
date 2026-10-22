@@ -773,6 +773,73 @@ async def generate_scene_motion(
     return {"project": project, "result": result}
 
 
+@app.get("/api/projects/{project_id}/renders/{filename}")
+async def get_project_render(project_id: str, filename: str):
+    path = project_store.render_file(project_id, filename)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Rendered video not found")
+    return FileResponse(path, media_type="video/mp4")
+
+
+@app.post("/api/projects/{project_id}/openmontage/render")
+async def render_project_openmontage(
+    project_id: str,
+    runtime: str = Query(default="hyperframes", pattern="^(hyperframes|remotion)$"),
+):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    cuts = []
+    assets = []
+    cursor = 0.0
+    for scene in project.storyboard.scenes:
+        chosen = scene.selected_motion_media or scene.selected_media
+        if not chosen or not chosen.local_path:
+            raise HTTPException(status_code=400, detail=f"{scene.id} has no chosen media")
+        path = project_store.media_file(project_id, Path(chosen.local_path).name)
+        if path is None:
+            raise HTTPException(status_code=400, detail=f"{scene.id} media file missing")
+        length = float(scene.duration_seconds)
+        source = str(path.resolve())
+        cuts.append({
+            "id": scene.id,
+            "source": source,
+            "in_seconds": cursor,
+            "out_seconds": cursor + length,
+            "subtitle": scene.subtitle_text or scene.narration if scene.subtitle_enabled else "",
+            "animation": "ken-burns" if chosen.media_type == "image" else "static",
+        })
+        assets.append({"id": scene.id, "path": source, "type": chosen.media_type})
+        cursor += length
+    output = project_store.render_dir(project_id) / f"{project_id}-{runtime}-{uuid4().hex[:8]}.mp4"
+    job = {
+        "runtime": runtime,
+        "workspace_path": str(project_store.render_dir(project_id).resolve()),
+        "output_path": str(output.resolve()),
+        "edit_decisions": {"cuts": cuts},
+        "asset_manifest": {"assets": assets},
+        "fps": 30,
+        "profile": {"width": 1920, "height": 1080, "fps": 30},
+        "script_text": project.storyboard.story_arc or project.storyboard.logline,
+    }
+    try:
+        result = await _run_montage(settings.videogen_openmontage_runner, "render", job)
+        if not output.is_file() or output.stat().st_size == 0:
+            raise ValueError("OpenMontage returned no usable MP4")
+    except Exception as exc:
+        output.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=502,
+            detail=f"OpenMontage {runtime} render failed: {_error_detail(exc)}",
+        ) from exc
+    return {
+        "success": True,
+        "video_url": f"/api/projects/{project_id}/renders/{output.name}",
+        "filename": output.name,
+        "result": result,
+    }
+
+
 @app.post("/api/projects/{project_id}/scenes/{scene_id}/media/select")
 async def select_scene_media(project_id: str, scene_id: str, payload: MediaAsset):
     project = project_store.load(project_id)
