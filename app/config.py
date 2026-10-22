@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.7
     llm_max_tokens: int = 2048
     llm_disable_thinking: bool = True
+    llm_debug_log: bool = False
+    llm_debug_log_path: Path = Path("./data/logs/storyboard.log")
 
     # Automatic model/GPU orchestration.
     model_orchestration_enabled: bool = True
