@@ -23,6 +23,8 @@ class OpenAITTSProvider:
         project_id: str,
         scene_id: str,
         audio_dir: Path,
+        voice: str | None = None,
+        instructions: str | None = None,
     ) -> AudioAsset:
         if not self.enabled:
             raise RuntimeError("OpenAI TTS is not configured. Set OPENAI_API_KEY in .env.")
@@ -38,11 +40,12 @@ class OpenAITTSProvider:
             raise ValueError(f"Unsupported TTS format: {audio_format}")
 
         endpoint = settings.openai_base_url.rstrip("/") + "/audio/speech"
+        selected_voice = voice or settings.openai_tts_voice
         payload = {
             "model": settings.openai_tts_model,
-            "voice": settings.openai_tts_voice,
+            "voice": selected_voice,
             "input": clean_text,
-            "instructions": settings.openai_tts_instructions,
+            "instructions": instructions or settings.openai_tts_instructions,
             "response_format": audio_format,
         }
         headers = {
@@ -71,9 +74,9 @@ class OpenAITTSProvider:
             audio_url=local_url,
             download_url=local_url,
             format=audio_format,
-            voice=settings.openai_tts_voice,
+            voice=selected_voice,
             model=settings.openai_tts_model,
-            label=f"{settings.openai_tts_model} · {settings.openai_tts_voice} · {scene_id}",
+            label=f"{settings.openai_tts_model} · {selected_voice} · {scene_id}",
             local_path=f"audio/{filename}",
         )
 
