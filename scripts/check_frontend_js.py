@@ -10,6 +10,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from jinja2 import Environment, StrictUndefined
+
 ROOT = Path(__file__).resolve().parents[1]
 templates = sorted((ROOT / "app" / "templates").glob("*.html"))
 if not templates:
@@ -22,10 +24,13 @@ for template in templates:
     for index, block in enumerate(blocks, 1):
         if not block.strip():
             continue
-        # Jinja template tokens are not valid JS; these templates use
-        # JavaScript in <script> blocks without server-side expressions.
+        # Render Jinja expressions before asking Node to validate the script.
+        # The HTML page normally receives these flags from the FastAPI endpoint.
+        rendered = Environment(undefined=StrictUndefined).from_string(block).render(
+            media_status={"local_quality": True, "local_next": True}
+        )
         with tempfile.NamedTemporaryFile("w", suffix=".js", encoding="utf-8") as output:
-            output.write(block)
+            output.write(rendered)
             output.flush()
             result = subprocess.run(
                 ["node", "--check", output.name],
