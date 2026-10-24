@@ -108,6 +108,9 @@ class Scene(BaseModel):
     image_review: dict | None = None
     selected_media: MediaAsset | None = None
     media_candidates: list[MediaAsset] = Field(default_factory=list)
+    tts_voice: str = "marin"
+    tts_direction: str = ""
+    audio_candidates: list[AudioAsset] = Field(default_factory=list)
     selected_audio: AudioAsset | None = None
     audio_duration_seconds: float | None = None
     final_duration_seconds: float | None = None
@@ -136,6 +139,8 @@ class SceneUpdate(BaseModel):
     media_search_query: str = Field(default="", max_length=1000)
     reference_keys: list[str] | None = None
     camera_movement: CameraMovement | None = None
+    tts_voice: str | None = Field(default=None, max_length=80)
+    tts_direction: str | None = Field(default=None, max_length=1200)
 
 
 class Storyboard(BaseModel):
