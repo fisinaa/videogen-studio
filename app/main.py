@@ -1136,6 +1136,30 @@ async def generate_scene_audio(project_id: str, scene_id: str):
     raise HTTPException(status_code=404, detail="Scene not found")
 
 
+@app.post("/api/projects/{project_id}/scenes/{scene_id}/audio/select/{asset_id}")
+async def select_narration_take(project_id: str, scene_id: str, asset_id: str):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    for scene in project.storyboard.scenes:
+        if scene.id != scene_id:
+            continue
+        assets = list(scene.audio_candidates)
+        if scene.selected_audio and not any(a.asset_id == scene.selected_audio.asset_id for a in assets):
+            assets.insert(0, scene.selected_audio)
+        choice = next((a for a in assets if a.asset_id == asset_id), None)
+        if choice is None:
+            raise HTTPException(status_code=404, detail="Narration variant not found")
+        filename = Path(choice.local_path or "").name
+        if not filename or project_store.audio_file(project_id, filename) is None:
+            raise HTTPException(status_code=404, detail="Narration file missing")
+        scene.selected_audio = choice
+        scene.audio_candidates = assets
+        project_store.save(project)
+        return project
+    raise HTTPException(status_code=404, detail="Scene not found")
+
+
 @app.post("/api/projects/{project_id}/audio/generate-missing")
 async def generate_missing_audio(project_id: str):
     project = project_store.load(project_id)
