@@ -26,7 +26,9 @@ class TTSRouter:
             return [self.piper]
         if mode == "openai":
             return [self.openai]
-        return [self.piper, self.openai]
+        # Prefer the expressive backend when acting directions are requested.
+        # Piper remains an offline fallback for auto mode.
+        return [self.openai, self.piper]
 
     async def generate(
         self,
