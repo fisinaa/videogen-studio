@@ -35,6 +35,8 @@ class TTSRouter:
         project_id: str,
         scene_id: str,
         audio_dir: Path,
+        voice: str | None = None,
+        instructions: str | None = None,
     ) -> AudioAsset:
         errors: list[str] = []
         for provider in self._providers():
@@ -42,11 +44,13 @@ class TTSRouter:
                 errors.append(f"{provider.name}: disabled")
                 continue
             try:
+                extras = {"voice": voice, "instructions": instructions} if provider is self.openai else {}
                 return await provider.generate(
                     text=text,
                     project_id=project_id,
                     scene_id=scene_id,
                     audio_dir=audio_dir,
+                    **extras,
                 )
             except Exception as exc:
                 errors.append(f"{provider.name}: {exc}")
