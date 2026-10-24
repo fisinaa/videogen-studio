@@ -140,6 +140,33 @@ def _camera_animation(scene, index: int, count: int) -> str:
     return ("zoom-in", "pan-left", "drift-up", "pan-right")[index % 4]
 
 
+TTS_VOICES = {"marin", "cedar", "coral", "nova", "shimmer", "fable", "onyx", "verse", "ballad", "sage", "echo", "alloy", "ash"}
+
+
+def _narration_direction(scene) -> str:
+    explicit = (scene.tts_direction or "").strip()
+    if explicit:
+        mood = explicit
+    else:
+        content = f"{scene.title} {scene.action} {scene.narration}".casefold()
+        if any(w in content for w in ("порог", "страх", "опасн", "камн", "бурн", "rapid", "danger", "boulder")):
+            mood = "Tension and urgency, hushed suspense at the start, a quickening rhythm around danger."
+        elif any(w in content for w in ("ветер", "порыв", "внезапн", "wind", "gust")):
+            mood = "A sudden note of surprise, a small gasp, then lively adventurous energy."
+        elif any(w in content for w in ("закат", "заводь", "успоко", "sunset", "calm", "arrival")):
+            mood = "Relief, tenderness and wonder, slow down gently, finish with a thoughtful pause."
+        else:
+            mood = "Curiosity and gentle wonder, relaxed storytelling pace and natural small pauses."
+    return (
+        "You are a gifted Russian-language children's audiobook narrator, not a news presenter. "
+        "Read the supplied Russian text exactly, without adding stage directions or sound effects. "
+        "Sound genuinely human and emotionally involved. Vary pitch, tempo and emphasis naturally; "
+        "use meaningful pauses at punctuation. No robotic sing-song, no shouting or theatrical caricature. "
+        "Keep the same narrator identity and tone across all scenes. "
+        "Scene-specific acting direction: " + mood
+    )
+
+
 def _scene_speech_text(scene) -> str:
     narration = scene.narration.strip()
     if narration:
@@ -379,6 +406,8 @@ async def update_scene(project_id: str, scene_id: str, payload: SceneUpdate):
                 "negative_prompt_en": scene.negative_prompt_en if payload.negative_prompt_en is None else payload.negative_prompt_en,
                 "media_search_query": payload.media_search_query,
                 "camera_movement": scene.camera_movement if payload.camera_movement is None else payload.camera_movement,
+                "tts_voice": scene.tts_voice if payload.tts_voice is None else payload.tts_voice,
+                "tts_direction": scene.tts_direction if payload.tts_direction is None else payload.tts_direction,
                 "selected_audio": None if speech_changed else scene.selected_audio,
             }
         )
@@ -1084,6 +1113,8 @@ async def generate_scene_audio(project_id: str, scene_id: str):
     if scene is None:
         raise HTTPException(status_code=404, detail="Scene not found")
     speech_text = _scene_speech_text(scene)
+    if scene.tts_voice not in TTS_VOICES:
+        raise HTTPException(status_code=400, detail="Unsupported TTS voice")
     if not speech_text:
         raise HTTPException(status_code=400, detail="Scene has no narration or dialogue to synthesize")
     try:
@@ -1092,12 +1123,14 @@ async def generate_scene_audio(project_id: str, scene_id: str):
             project_id=project.id,
             scene_id=scene.id,
             audio_dir=project_store.audio_dir(project.id),
+            voice=scene.tts_voice,
+            instructions=_narration_direction(scene),
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"TTS generation failed: {_error_detail(exc)}") from exc
     for index, item in enumerate(project.storyboard.scenes):
         if item.id == scene_id:
-            project.storyboard.scenes[index] = item.model_copy(update={"selected_audio": asset})
+            project.storyboard.scenes[index] = item.model_copy(update={"selected_audio": asset, "audio_candidates": list(item.audio_candidates) + [asset]})
             project_store.save(project)
             return project
     raise HTTPException(status_code=404, detail="Scene not found")
@@ -1125,8 +1158,10 @@ async def generate_missing_audio(project_id: str):
                 project_id=project.id,
                 scene_id=scene.id,
                 audio_dir=project_store.audio_dir(project.id),
+                voice=scene.tts_voice,
+                instructions=_narration_direction(scene),
             )
-            project.storyboard.scenes[index] = scene.model_copy(update={"selected_audio": asset})
+            project.storyboard.scenes[index] = scene.model_copy(update={"selected_audio": asset, "audio_candidates": list(scene.audio_candidates) + [asset]})
             project_store.save(project)
             ok += 1
         except Exception as exc:
