@@ -18,7 +18,7 @@ if not templates:
 count = 0
 for template in templates:
     text = template.read_text(encoding="utf-8")
-    blocks = re.findall(r"<script(?:\\s[^>]*)?>([\\s\\S]*?)</script>", text, flags=re.IGNORECASE)
+    blocks = re.findall(r"<script(?:\s[^>]*)?>([\s\S]*?)</script>", text, flags=re.IGNORECASE)
     for index, block in enumerate(blocks, 1):
         if not block.strip():
             continue
@@ -33,7 +33,7 @@ for template in templates:
             )
         if result.returncode:
             raise SystemExit(
-                f"JavaScript syntax error in {template.name} script #{index}:\\n"
+                f"JavaScript syntax error in {template.name} script #{index}:\n"
                 + result.stderr
             )
         count += 1
