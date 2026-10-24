@@ -1160,6 +1160,45 @@ async def select_narration_take(project_id: str, scene_id: str, asset_id: str):
     raise HTTPException(status_code=404, detail="Scene not found")
 
 
+@app.post("/api/projects/{project_id}/audio/regenerate-expressive")
+async def regenerate_expressive_audio(project_id: str):
+    project = project_store.load(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not tts_router.openai.enabled:
+        raise HTTPException(
+            status_code=409,
+            detail="Expressive narration needs OPENAI_API_KEY in VideoGen .env",
+        )
+    completed = 0
+    errors = []
+    for scene in project.storyboard.scenes:
+        text = _scene_speech_text(scene)
+        if not text:
+            continue
+        try:
+            if scene.tts_voice not in TTS_VOICES:
+                raise ValueError(f"Unsupported voice: {scene.tts_voice}")
+            asset = await tts_router.openai.generate(
+                text=text,
+                project_id=project.id,
+                scene_id=scene.id,
+                audio_dir=project_store.audio_dir(project.id),
+                voice=scene.tts_voice,
+                instructions=_narration_direction(scene),
+            )
+            previous = list(scene.audio_candidates)
+            if scene.selected_audio and not any(a.asset_id == scene.selected_audio.asset_id for a in previous):
+                previous.insert(0, scene.selected_audio)
+            scene.audio_candidates = previous + [asset]
+            scene.selected_audio = asset
+            project_store.save(project)
+            completed += 1
+        except Exception as exc:
+            errors.append({"scene_id": scene.id, "error": _error_detail(exc)})
+    return {"project": project, "generated": completed, "errors": errors}
+
+
 @app.post("/api/projects/{project_id}/audio/generate-missing")
 async def generate_missing_audio(project_id: str):
     project = project_store.load(project_id)
