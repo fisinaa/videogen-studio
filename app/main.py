@@ -1118,7 +1118,9 @@ async def generate_scene_audio(project_id: str, scene_id: str):
     if not speech_text:
         raise HTTPException(status_code=400, detail="Scene has no narration or dialogue to synthesize")
     try:
-        asset = await tts_router.generate(
+        # Single-scene expressive takes must not silently fall back to Piper.
+        # That fallback produced quick, flat audio while the UI claimed success.
+        asset = await tts_router.openai.generate(
             text=speech_text,
             project_id=project.id,
             scene_id=scene.id,
@@ -1126,6 +1128,10 @@ async def generate_scene_audio(project_id: str, scene_id: str):
             voice=scene.tts_voice,
             instructions=_narration_direction(scene),
         )
+        filename = Path(asset.local_path or "").name
+        generated = project_store.audio_file(project_id, filename) if filename else None
+        if generated is None or generated.stat().st_size < 1024:
+            raise ValueError("TTS returned no usable audio file")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"TTS generation failed: {_error_detail(exc)}") from exc
     for index, item in enumerate(project.storyboard.scenes):
